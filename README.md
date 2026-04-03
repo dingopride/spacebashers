@@ -57,6 +57,23 @@ python3 spacebashers.py
 
 Classic mode with barriers, mystery ship, HP system, and level progression. Requires Python 3.6+ and a terminal with curses. Sound via macOS `afplay`.
 
+## Network Multiplayer (Terminal)
+
+Same hungry hungry hippos gameplay, but over the network. Pure Python stdlib, no dependencies.
+
+**Host a game:**
+```bash
+python3 netplay.py host [--port 7777]
+```
+Displays your LAN IP on startup. Press SPACE when 2-4 players have joined.
+
+**Join a game:**
+```bash
+python3 netplay.py join 192.168.1.X [--port 7777] [--name YourName]
+```
+
+Host controls: `A`/`D` + `W` to fire, `SPACE` to start rounds, `M` sound, `Q` quit. Clients use the same movement/fire keys.
+
 ---
 
 ## Commit Log
