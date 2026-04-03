@@ -19,10 +19,55 @@ canvas {
   image-rendering: pixelated;
   border: 1px solid #333;
 }
+#sdp-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.92);
+  z-index: 10;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Courier New', monospace;
+  color: #00ff00;
+}
+#sdp-overlay.active { display: flex; }
+#sdp-overlay h2 { margin-bottom: 12px; font-size: 18px; }
+#sdp-overlay p { color: #888; margin-bottom: 8px; font-size: 13px; max-width: 500px; text-align: center; }
+#sdp-overlay textarea {
+  width: 460px; height: 80px;
+  background: #111; color: #0f0; border: 1px solid #333;
+  font-family: 'Courier New', monospace; font-size: 11px;
+  padding: 6px; margin: 4px 0; resize: none;
+}
+#sdp-overlay button {
+  background: #222; color: #0f0; border: 1px solid #0f0;
+  padding: 8px 24px; margin: 6px;
+  font-family: 'Courier New', monospace; font-size: 14px; cursor: pointer;
+}
+#sdp-overlay button:hover { background: #0f0; color: #000; }
+#sdp-overlay .status { color: #cc0; margin-top: 8px; font-size: 13px; }
+#sdp-overlay .error { color: #f33; }
+#sdp-overlay .row { display: flex; gap: 8px; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="sdp-overlay">
+  <h2 id="sdp-title">Network Game</h2>
+  <p id="sdp-desc"></p>
+  <textarea id="sdp-out" readonly placeholder="Your code will appear here..."></textarea>
+  <div class="row">
+    <button id="sdp-copy" onclick="copyCode()">Copy Code</button>
+  </div>
+  <p id="sdp-paste-label" style="margin-top:12px"></p>
+  <textarea id="sdp-in" placeholder="Paste code here..."></textarea>
+  <div class="row">
+    <button id="sdp-connect" onclick="submitCode()">Connect</button>
+    <button id="sdp-cancel" onclick="cancelNet()">Cancel</button>
+  </div>
+  <div class="status" id="sdp-status"></div>
+</div>
 <script>
 "use strict";
 
@@ -157,12 +202,24 @@ const SPRITES_POOL = ["(@@)", "<**>", "/\\/\\", "{##}", "[@@]", "<==>", "(##)", 
 const INV_W = 4;
 
 // --- Game Modes ---
-let state = "title";       // title | setup | countdown | playing | waveEnd | results
+let state = "title";
 let numPlayers = 2;
-let soloScheme = 0;  // which control scheme for solo play
-let enemyBullets = [];     // { x, y }
+let soloScheme = 0;
+let enemyBullets = [];
 let lastEnemyShot = 0;
 let enemyShotInterval = 1.0;
+
+// --- Network state ---
+let netMode = null;          // null | "host" | "client"
+let netPeers = [];           // DataChannels (host has multiple, client has one)
+let netPc = null;            // RTCPeerConnection (client only uses one)
+let netHostPcs = [];         // host: array of {pc, dc, id, ready}
+let netMyId = 0;
+let netRemoteInputs = {};    // host: {playerId: {l,r,f}}
+let netLatestSnap = null;    // client: latest state from host
+let netLobbyNames = [];
+let netConnectedCount = 0;
+let netSnapInterval = null;
 let players = [];
 let bullets = [];           // { x, y, owner, color }
 let invaders = [];          // { x, y, sprite, hp, points, speed, color, active }
@@ -248,8 +305,20 @@ function startCountdown() {
   countdownNum = 3;
   wave = 0;
   players = [];
-  if (numPlayers === 1) {
-    // Solo: use selected control scheme
+  if (netMode === "host") {
+    // Host is P1 with their local keys, remote players get assigned indices
+    const hostP = createPlayer(0);
+    hostP.index = 0;
+    players.push(hostP);
+    for (const peer of netHostPcs) {
+      if (peer.ready) {
+        const p = createPlayer(peer.id);
+        p.index = peer.id;
+        players.push(p);
+      }
+    }
+    numPlayers = players.length;
+  } else if (numPlayers === 1) {
     const p = createPlayer(soloScheme);
     p.index = 0;
     p.name = "P1";
@@ -301,6 +370,12 @@ function update() {
 
   if (state === "title") {
     if (consumePress("Space") || consumePress("Enter")) { ensureAudio(); startSetup(); }
+    if (consumePress("KeyH")) { startNetHost(); }
+    if (consumePress("KeyJ")) { startNetClient(); }
+    clearPresses();
+    return;
+  }
+  if (state === "netLobby" || state === "netClientWait") {
     clearPresses();
     return;
   }
@@ -594,15 +669,14 @@ function drawTitle() {
 
   const inst = [
     "",
-    "2-4 Players  |  Local Multiplayer  |  Most Kills Wins",
+    "1-4 Players  |  Local or Network  |  Most Kills Wins",
     "",
     "P1: A/D + W          P2: Arrows + Up",
     "P3: J/L + I          P4: Numpad 4/6/8",
     "",
     "Grab powerups:  + HP   x 2X   ! RAPID   * STEAL",
-    "Build combos with fast consecutive kills!",
     "",
-    "Press SPACE to start!",
+    "SPACE: Local Game   H: Host Network   J: Join Network",
   ];
   inst.forEach((line, i) => {
     let color = C.white;
@@ -807,13 +881,497 @@ function drawResults() {
   drawTextCentered("SPACE: Menu  |  R: Rematch", Math.floor(ROWS/2) + sorted.length * 2 + 2, C.yellow);
 }
 
-// Shim drawRect for translucent overlay
-const _origFill = ctx.fillRect.bind(ctx);
+// ─── WebRTC Networking ───────────────────────────────────────────────────────
+
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+
+function compressSDP(sdp) {
+  // Strip unnecessary lines and base64 encode
+  const stripped = JSON.stringify(sdp);
+  return btoa(unescape(encodeURIComponent(stripped)));
+}
+
+function decompressSDP(code) {
+  try {
+    const json = decodeURIComponent(escape(atob(code.trim())));
+    return JSON.parse(json);
+  } catch(e) { return null; }
+}
+
+const overlay = document.getElementById("sdp-overlay");
+const sdpOut = document.getElementById("sdp-out");
+const sdpIn = document.getElementById("sdp-in");
+const sdpStatus = document.getElementById("sdp-status");
+const sdpTitle = document.getElementById("sdp-title");
+const sdpDesc = document.getElementById("sdp-desc");
+const sdpPasteLabel = document.getElementById("sdp-paste-label");
+const sdpCopyBtn = document.getElementById("sdp-copy");
+const sdpConnectBtn = document.getElementById("sdp-connect");
+
+function showOverlay() { overlay.classList.add("active"); canvas.style.display = "none"; }
+function hideOverlay() { overlay.classList.remove("active"); canvas.style.display = ""; sdpIn.value = ""; sdpOut.value = ""; sdpStatus.textContent = ""; }
+
+function copyCode() {
+  sdpOut.select();
+  navigator.clipboard.writeText(sdpOut.value).then(() => {
+    sdpStatus.textContent = "Copied to clipboard!";
+    sdpStatus.className = "status";
+  });
+}
+
+function cancelNet() {
+  hideOverlay();
+  cleanupNet();
+  state = "title";
+}
+
+function cleanupNet() {
+  if (netSnapInterval) { clearInterval(netSnapInterval); netSnapInterval = null; }
+  netHostPcs.forEach(p => { try { p.pc.close(); } catch(e){} });
+  if (netPc) { try { netPc.close(); } catch(e){} }
+  netPeers = []; netHostPcs = []; netPc = null;
+  netMode = null; netRemoteInputs = {}; netLatestSnap = null; netConnectedCount = 0;
+}
+
+// --- Host Flow ---
+async function startNetHost() {
+  ensureAudio();
+  cleanupNet();
+  netMode = "host";
+  netMyId = 0;
+  state = "netLobby";
+
+  // Create first offer for a client
+  await createHostOffer();
+}
+
+async function createHostOffer() {
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const dc = pc.createDataChannel("game", { ordered: false, maxRetransmits: 0 });
+  const peerId = netHostPcs.length + 1;
+
+  const peer = { pc, dc, id: peerId, ready: false };
+  netHostPcs.push(peer);
+
+  dc.onopen = () => {
+    peer.ready = true;
+    netConnectedCount++;
+    dc.send(JSON.stringify({ t: "assign", id: peerId, name: PLAYER_CONFIGS[peerId].name }));
+    sdpStatus.textContent = `Player ${peerId + 1} connected! ${netConnectedCount + 1} players total.`;
+    // If more room, prep next offer prompt
+    if (netHostPcs.length < 3) {
+      sdpDesc.textContent = `Player ${peerId + 1} connected. Share a new code for another player, or close this to start.`;
+    }
+  };
+
+  dc.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.t === "input") {
+        netRemoteInputs[peerId] = { l: msg.l, r: msg.r, f: msg.f };
+      }
+    } catch(err) {}
+  };
+
+  dc.onclose = () => {
+    peer.ready = false;
+    netConnectedCount = netHostPcs.filter(p => p.ready).length;
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  // Wait for ICE gathering
+  await new Promise(resolve => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    pc.onicecandidate = e => { if (!e.candidate) resolve(); };
+    setTimeout(resolve, 3000);
+  });
+
+  const code = compressSDP(pc.localDescription);
+  sdpTitle.textContent = `HOST - Share this code with Player ${peerId + 1}`;
+  sdpDesc.textContent = "Copy the code below and send it to the other player. Then paste their response code and click Connect.";
+  sdpOut.value = code;
+  sdpPasteLabel.textContent = `Paste Player ${peerId + 1}'s response code:`;
+  sdpIn.value = "";
+  sdpConnectBtn.textContent = "Connect";
+  sdpConnectBtn.onclick = () => submitHostAnswer(peer);
+  showOverlay();
+}
+
+async function submitHostAnswer(peer) {
+  const answerCode = sdpIn.value.trim();
+  if (!answerCode) { sdpStatus.textContent = "Paste the response code first!"; sdpStatus.className = "status error"; return; }
+  const answer = decompressSDP(answerCode);
+  if (!answer) { sdpStatus.textContent = "Invalid code!"; sdpStatus.className = "status error"; return; }
+  try {
+    await peer.pc.setRemoteDescription(answer);
+    sdpStatus.textContent = "Connecting...";
+    sdpStatus.className = "status";
+    // Wait for connection
+    setTimeout(() => {
+      if (peer.ready) {
+        if (netHostPcs.length < 3) {
+          sdpStatus.textContent = "Connected! Click 'Add Player' for another, or 'Start Game' to begin.";
+          sdpConnectBtn.textContent = "Add Player";
+          sdpConnectBtn.onclick = () => createHostOffer();
+          // Add a start button
+          const startBtn = document.createElement("button");
+          startBtn.textContent = "Start Game";
+          startBtn.onclick = () => { hideOverlay(); hostStartGame(); };
+          startBtn.id = "sdp-start";
+          if (!document.getElementById("sdp-start")) {
+            sdpConnectBtn.parentElement.appendChild(startBtn);
+          }
+        } else {
+          hideOverlay();
+          hostStartGame();
+        }
+      } else {
+        sdpStatus.textContent = "Connection failed. Try again.";
+        sdpStatus.className = "status error";
+      }
+    }, 2000);
+  } catch(e) {
+    sdpStatus.textContent = "Failed: " + e.message;
+    sdpStatus.className = "status error";
+  }
+}
+
+function hostStartGame() {
+  // Remove temp start button
+  const sb = document.getElementById("sdp-start");
+  if (sb) sb.remove();
+  hideOverlay();
+
+  numPlayers = 1 + netHostPcs.filter(p => p.ready).length;
+  state = "setup";
+
+  // Override startCountdown to include network players
+  const origCountdown = startCountdown;
+
+  // Start broadcasting state
+  netSnapInterval = setInterval(() => {
+    if (netMode !== "host") return;
+    const snap = buildSnapshot();
+    const msg = JSON.stringify(snap);
+    netHostPcs.forEach(p => {
+      if (p.ready && p.dc.readyState === "open") {
+        try { p.dc.send(msg); } catch(e) {}
+      }
+    });
+  }, 50); // 20Hz
+}
+
+function buildSnapshot() {
+  return {
+    t: "state", st: state, wave, tw: totalWaves,
+    players: players.map(p => ({
+      index: p.index, name: p.name, color: colorToName(p.color),
+      ship: p.ship, x: Math.round(p.x * 10) / 10, y: p.y,
+      hp: p.hp, maxHp: p.maxHp, score: p.score, kills: p.kills,
+      alive: p.alive, powerup: p.powerup,
+      combo: p.combo, lastKillTime: p.lastKillTime,
+    })),
+    invaders: invaders.filter(i => i.active).map(i => ({
+      x: Math.round(i.x * 10) / 10, y: Math.round(i.y * 10) / 10,
+      sprite: i.sprite, hp: i.hp, maxHp: i.maxHp, color: colorToName(i.color),
+    })),
+    bullets: bullets.map(b => ({
+      x: Math.round(b.x), y: Math.round(b.y * 10) / 10,
+      owner: b.owner, color: colorToName(b.color),
+    })),
+    enemyBullets: enemyBullets.map(b => ({
+      x: Math.round(b.x), y: Math.round(b.y * 10) / 10,
+    })),
+    bonuses: bonusDrops.map(b => ({
+      x: Math.round(b.x), y: Math.round(b.y * 10) / 10,
+      char: b.char, color: colorToName(b.color),
+    })),
+    explosions: explosions.map(e => ({
+      x: e.x, y: e.y, frame: e.frame, color: colorToName(e.color),
+    })),
+    cn: countdownNum,
+  };
+}
+
+function colorToName(c) {
+  for (const [name, val] of Object.entries(C)) { if (val === c) return name; }
+  return "white";
+}
+function nameToColor(n) { return C[n] || C.white; }
+
+// --- Client Flow ---
+async function startNetClient() {
+  ensureAudio();
+  cleanupNet();
+  netMode = "client";
+  state = "netLobby";
+
+  sdpTitle.textContent = "JOIN - Paste the host's code";
+  sdpDesc.textContent = "Paste the code you received from the host, then click Connect.";
+  sdpOut.value = "";
+  sdpPasteLabel.textContent = "Host's code:";
+  sdpIn.value = "";
+  sdpCopyBtn.style.display = "none";
+  document.getElementById("sdp-out").style.display = "none";
+  sdpConnectBtn.textContent = "Connect";
+  sdpConnectBtn.onclick = submitClientOffer;
+  showOverlay();
+}
+
+async function submitClientOffer() {
+  const offerCode = sdpIn.value.trim();
+  if (!offerCode) { sdpStatus.textContent = "Paste the host's code first!"; sdpStatus.className = "status error"; return; }
+  const offer = decompressSDP(offerCode);
+  if (!offer) { sdpStatus.textContent = "Invalid code!"; sdpStatus.className = "status error"; return; }
+
+  netPc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+  netPc.ondatachannel = (e) => {
+    const dc = e.channel;
+    netPeers = [dc];
+    dc.onopen = () => {
+      sdpStatus.textContent = "Connected! Waiting for host to start...";
+    };
+    dc.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.t === "state") {
+          netLatestSnap = msg;
+        } else if (msg.t === "assign") {
+          netMyId = msg.id;
+        }
+      } catch(err) {}
+    };
+    dc.onclose = () => {
+      netLatestSnap = null;
+      state = "title";
+      cleanupNet();
+    };
+  };
+
+  try {
+    await netPc.setRemoteDescription(offer);
+    const answer = await netPc.createAnswer();
+    await netPc.setLocalDescription(answer);
+
+    await new Promise(resolve => {
+      if (netPc.iceGatheringState === "complete") return resolve();
+      netPc.onicecandidate = e => { if (!e.candidate) resolve(); };
+      setTimeout(resolve, 3000);
+    });
+
+    const code = compressSDP(netPc.localDescription);
+    // Show answer code
+    document.getElementById("sdp-out").style.display = "";
+    sdpCopyBtn.style.display = "";
+    sdpOut.value = code;
+    sdpTitle.textContent = "JOIN - Send this code back to the host";
+    sdpDesc.textContent = "Copy the code below and send it back to the host. Connection will establish automatically.";
+    sdpPasteLabel.textContent = "";
+    sdpIn.style.display = "none";
+    sdpConnectBtn.style.display = "none";
+
+    // Wait for data channel
+    const waitForDc = setInterval(() => {
+      if (netPeers.length > 0 && netPeers[0].readyState === "open") {
+        clearInterval(waitForDc);
+        hideOverlay();
+        sdpIn.style.display = "";
+        sdpConnectBtn.style.display = "";
+        sdpCopyBtn.style.display = "";
+        document.getElementById("sdp-out").style.display = "";
+        state = "netClientWait";
+        // Start sending input
+        setInterval(() => {
+          if (netMode !== "client" || !netPeers[0] || netPeers[0].readyState !== "open") return;
+          // Use P1 controls since client picks in setup — use all common keys
+          const inp = {
+            t: "input",
+            l: keys["ArrowLeft"] || keys["KeyA"] || keys["KeyJ"] || keys["Numpad4"],
+            r: keys["ArrowRight"] || keys["KeyD"] || keys["KeyL"] || keys["Numpad6"],
+            f: keys["ArrowUp"] || keys["KeyW"] || keys["KeyI"] || keys["Numpad8"] || keys["Space"],
+          };
+          try { netPeers[0].send(JSON.stringify(inp)); } catch(e) {}
+        }, 50);
+      }
+    }, 100);
+  } catch(e) {
+    sdpStatus.textContent = "Failed: " + e.message;
+    sdpStatus.className = "status error";
+  }
+}
+
+// ─── Network-aware update/draw patches ───────────────────────────────────────
+
+// Patch update: if host, apply remote inputs; if client, skip sim
+const _origUpdate = update;
+function netUpdate() {
+  if (netMode === "host") {
+    // Apply remote inputs to their players
+    for (const [id, inp] of Object.entries(netRemoteInputs)) {
+      const pid = parseInt(id);
+      const p = players.find(pl => pl.index === pid);
+      if (p && p.alive) {
+        const t = now();
+        if (inp.l) p.x = Math.max(0, p.x - 0.45);
+        if (inp.r) p.x = Math.min(COLS - SHIP_W - 1, p.x + 0.45);
+        const cd = p.powerup === "rapid" ? 0.06 : p.fireCooldown;
+        if (inp.f && t - p.lastFire >= cd) {
+          const bx = Math.round(p.x) + Math.floor(SHIP_W / 2);
+          bullets.push({ x: bx, y: p.y - 1, owner: p.index, color: p.color });
+          p.lastFire = t;
+        }
+      }
+    }
+    _origUpdate();
+  } else if (netMode === "client") {
+    // Client: don't run sim, just render latest snapshot
+    if (state === "netClientWait") {
+      // waiting
+    }
+    clearPresses();
+  } else {
+    _origUpdate();
+  }
+}
+
+function netDraw() {
+  if (netMode === "client" && netLatestSnap) {
+    drawClientState(netLatestSnap);
+    return;
+  }
+  if (netMode === "client" && !netLatestSnap) {
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawTextCentered("Connected. Waiting for host to start...", Math.floor(ROWS/2), C.yellow);
+    return;
+  }
+  draw();
+}
+
+function drawClientState(snap) {
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const st = snap.st;
+
+  if (st === "playing" || st === "waveEnd" || st === "results") {
+    // HUD
+    drawText("\u2500".repeat(COLS), 0, 0.7, C.dim);
+    const np = snap.players.length;
+    const segW = Math.floor(COLS / Math.max(1, np));
+    for (let i = 0; i < snap.players.length; i++) {
+      const p = snap.players[i];
+      const sx = i * segW + 1;
+      const pc = nameToColor(p.color);
+      const info = `${p.name}: ${p.score}`;
+      drawText(info, sx, 0, p.alive ? pc : C.dim, true);
+      const filled = Math.max(0, Math.round((p.hp / Math.max(1, p.maxHp)) * 6));
+      const hpBar = "\u2588".repeat(filled) + "\u2591".repeat(6 - filled);
+      const hpColor = p.hp > 6 ? C.green : p.hp > 3 ? C.yellow : C.red;
+      drawText("[", sx + info.length + 1, 0, C.dim);
+      drawText(hpBar, sx + info.length + 2, 0, p.alive ? hpColor : C.dim);
+      drawText("]", sx + info.length + 8, 0, C.dim);
+      if (p.powerup) {
+        const labels = { double: "x2", rapid: "!!", steal: "$$" };
+        drawText(labels[p.powerup] || "", sx + info.length + 10, 0, C.magenta, true);
+      }
+      if (p.combo > 1) drawText(`${p.combo}x`, sx + info.length + 13, 0, C.yellow, true);
+    }
+    const waveInfo = `Wave ${snap.wave}/${snap.tw}`;
+    drawText(waveInfo, COLS - waveInfo.length - 2, 0, C.dim);
+
+    // Invaders
+    for (const inv of (snap.invaders || [])) {
+      const ix = Math.round(inv.x), iy = Math.round(inv.y);
+      if (iy < 1 || iy >= ROWS) continue;
+      const col = inv.hp < inv.maxHp && inv.hp <= 1 ? C.red : nameToColor(inv.color);
+      drawText(inv.sprite, ix, iy, col, inv.hp === inv.maxHp);
+      if (inv.maxHp > 1) drawText(".".repeat(inv.hp), ix, iy - 0.4, C.dim);
+    }
+
+    // Bonuses
+    const pulse = Math.sin(now() * 8) > 0;
+    for (const bd of (snap.bonuses || [])) {
+      drawText(bd.char, Math.round(bd.x), Math.round(bd.y), pulse ? nameToColor(bd.color) : C.white, true);
+    }
+
+    // Players
+    const t = now();
+    for (const p of (snap.players || [])) {
+      const px = Math.round(p.x), py = p.y;
+      const pc = nameToColor(p.color);
+      if (!p.alive) { drawText("XXXXX", px, py, C.dim); continue; }
+      let attr = pc;
+      if (p.powerup && Math.sin(t * 12) > 0) attr = C.white;
+      drawText(p.ship, px, py, attr, true);
+      if (p.index === netMyId) drawText(`[${p.name}]`, px + 1, py + 1, pc);
+    }
+
+    // Bullets
+    for (const b of (snap.bullets || [])) {
+      drawText("|", Math.round(b.x), Math.round(b.y), nameToColor(b.color), true);
+    }
+    for (const b of (snap.enemyBullets || [])) {
+      drawText("!", Math.round(b.x), Math.round(b.y), C.red, true);
+    }
+
+    // Explosions
+    const boom = ["*", "\\*/", " . "];
+    for (const e of (snap.explosions || [])) {
+      const f = Math.min(Math.floor(e.frame / 2), boom.length - 1);
+      drawText(boom[f], e.x, e.y, nameToColor(e.color) || C.red, true);
+    }
+  }
+
+  if (st === "countdown") {
+    for (const p of (snap.players || [])) {
+      drawText(p.ship, Math.round(p.x), p.y, nameToColor(p.color), true);
+      drawText(p.name, Math.round(p.x) + 1, p.y + 1, nameToColor(p.color));
+    }
+    const cn = snap.cn || 0;
+    if (cn > 0) drawTextCentered(`${cn}`, Math.floor(ROWS/2), C.white, true);
+    else drawTextCentered("GO!", Math.floor(ROWS/2), C.yellow, true);
+    drawTextCentered(`Wave ${snap.wave + 1} of ${snap.tw}`, Math.floor(ROWS/2) + 2, C.dim);
+  }
+
+  if (st === "waveEnd") {
+    drawRect(Math.floor(COLS/2) - 16, Math.floor(ROWS/2) - 3, 32, 7, "rgba(0,0,0,0.85)");
+    const isFinal = snap.wave >= snap.tw || (snap.players || []).every(p => !p.alive);
+    const msg = isFinal ? "FINAL ROUND COMPLETE!" : `Wave ${snap.wave} Complete!`;
+    drawTextCentered(msg, Math.floor(ROWS/2) - 2, C.yellow, true);
+    const sorted = [...(snap.players || [])].sort((a, b) => b.score - a.score);
+    sorted.forEach((p, i) => {
+      const medal = i === 0 ? ">> " : "   ";
+      drawTextCentered(`${medal}${p.name}: ${p.score} (${p.kills} kills)`, Math.floor(ROWS/2) + i, nameToColor(p.color), i === 0);
+    });
+  }
+
+  if (st === "results") {
+    drawTextCentered("GAME OVER", Math.floor(ROWS/2) - 8, C.red, true);
+    const sorted = [...(snap.players || [])].sort((a, b) => b.score - a.score);
+    if (sorted[0]) drawTextCentered(`${sorted[0].name} WINS!`, Math.floor(ROWS/2) - 5, nameToColor(sorted[0].color), true);
+    drawTextCentered("FINAL SCORES", Math.floor(ROWS/2) - 3, C.white, true);
+    const top = Math.max(1, sorted[0]?.score || 1);
+    sorted.forEach((p, i) => {
+      const rank = ["1st","2nd","3rd","4th"][i];
+      const bar = "\u2588".repeat(Math.max(1, Math.round((p.score / top) * 16)));
+      drawTextCentered(` ${rank}  ${p.name}  ${String(p.score).padStart(6)}  ${bar}  (${p.kills} kills)`, Math.floor(ROWS/2) - 1 + i * 2, nameToColor(p.color), i === 0);
+    });
+    drawTextCentered("Host controls next round", Math.floor(ROWS/2) + sorted.length * 2 + 2, C.dim);
+  }
+
+  if (st === "setup") {
+    drawTextCentered("Host is setting up the game...", Math.floor(ROWS/2), C.yellow);
+  }
+}
 
 // --- Game Loop ---
 function loop() {
-  update();
-  draw();
+  netUpdate();
+  netDraw();
   requestAnimationFrame(loop);
 }
 
