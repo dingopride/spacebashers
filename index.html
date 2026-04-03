@@ -159,6 +159,10 @@ const INV_W = 4;
 // --- Game Modes ---
 let state = "title";       // title | setup | countdown | playing | waveEnd | results
 let numPlayers = 2;
+let soloScheme = 0;  // which control scheme for solo play
+let enemyBullets = [];     // { x, y }
+let lastEnemyShot = 0;
+let enemyShotInterval = 1.0;
 let players = [];
 let bullets = [];           // { x, y, owner, color }
 let invaders = [];          // { x, y, sprite, hp, points, speed, color, active }
@@ -244,11 +248,20 @@ function startCountdown() {
   countdownNum = 3;
   wave = 0;
   players = [];
-  for (let i = 0; i < numPlayers; i++) players.push(createPlayer(i));
+  if (numPlayers === 1) {
+    // Solo: use selected control scheme
+    const p = createPlayer(soloScheme);
+    p.index = 0;
+    p.name = "P1";
+    players.push(p);
+  } else {
+    for (let i = 0; i < numPlayers; i++) players.push(createPlayer(i));
+  }
   bullets = [];
   invaders = [];
   bonusDrops = [];
   explosions = [];
+  enemyBullets = [];
 }
 
 function startWave() {
@@ -257,6 +270,8 @@ function startWave() {
   bullets = [];
   invaders = [];
   bonusDrops = [];
+  enemyBullets = [];
+  lastEnemyShot = now();
   // More invaders each wave, spawned over time
   invadersToSpawn = 15 + wave * 8;
   invadersKilledThisWave = 0;
@@ -291,8 +306,16 @@ function update() {
   }
 
   if (state === "setup") {
-    if (consumePress("ArrowLeft") || consumePress("KeyA")) numPlayers = Math.max(1, numPlayers - 1);
-    if (consumePress("ArrowRight") || consumePress("KeyD")) numPlayers = Math.min(4, numPlayers + 1);
+    if (consumePress("ArrowLeft") || consumePress("KeyA")) {
+      if (numPlayers === 1) { soloScheme = (soloScheme + 3) % 4; }
+      else { numPlayers = Math.max(1, numPlayers - 1); }
+    }
+    if (consumePress("ArrowRight") || consumePress("KeyD")) {
+      if (numPlayers === 1) { soloScheme = (soloScheme + 1) % 4; }
+      else { numPlayers = Math.min(4, numPlayers + 1); }
+    }
+    if (consumePress("ArrowUp") || consumePress("KeyW")) numPlayers = Math.min(4, numPlayers + 1);
+    if (consumePress("ArrowDown") || consumePress("KeyS")) numPlayers = Math.max(1, numPlayers - 1);
     if (consumePress("Space") || consumePress("Enter")) startCountdown();
     if (consumePress("Escape")) state = "title";
     if (consumePress("KeyM")) soundEnabled = !soundEnabled;
@@ -379,6 +402,56 @@ function update() {
     bd.y += 0.15;
     return bd.y < ROWS;
   });
+
+  // Invader shooting (random, not aimed)
+  const shotInterval = Math.max(0.3, 1.2 - wave * 0.1);
+  if (t - lastEnemyShot >= shotInterval) {
+    lastEnemyShot = t;
+    const shooters = invaders.filter(inv => inv.active && inv.y > 2 && inv.y < ROWS - 5);
+    if (shooters.length > 0) {
+      const shooter = shooters[Math.floor(Math.random() * shooters.length)];
+      enemyBullets.push({ x: Math.round(shooter.x) + Math.floor(INV_W / 2), y: shooter.y + 1 });
+    }
+  }
+
+  // Move enemy bullets down
+  enemyBullets = enemyBullets.filter(b => { b.y += 0.25; return b.y < ROWS; });
+
+  // Enemy bullets vs invaders (friendly fire!)
+  for (let bi = enemyBullets.length - 1; bi >= 0; bi--) {
+    const b = enemyBullets[bi];
+    for (const inv of invaders) {
+      if (!inv.active) continue;
+      const ix = Math.round(inv.x), iy = Math.round(inv.y);
+      if (b.x >= ix && b.x <= ix + INV_W && Math.round(b.y) >= iy - 1 && Math.round(b.y) <= iy) {
+        inv.hp--;
+        enemyBullets.splice(bi, 1);
+        if (inv.hp <= 0) {
+          inv.active = false;
+          explosions.push({ x: ix, y: iy, frame: 0, color: C.red });
+          sfx.kill(1);
+        }
+        break;
+      }
+    }
+  }
+
+  // Enemy bullets vs players
+  for (let bi = enemyBullets.length - 1; bi >= 0; bi--) {
+    const b = enemyBullets[bi];
+    for (const p of players) {
+      if (!p.alive) continue;
+      const px = Math.round(p.x);
+      if (Math.round(b.y) >= p.y - 1 && Math.round(b.y) <= p.y && b.x >= px && b.x <= px + SHIP_W) {
+        p.hp -= 3;
+        explosions.push({ x: px, y: p.y, frame: 0, color: C.red });
+        sfx.playerHit();
+        enemyBullets.splice(bi, 1);
+        if (p.hp <= 0) { p.hp = 0; p.alive = false; }
+        break;
+      }
+    }
+  }
 
   // Explosions
   explosions = explosions.filter(e => { e.frame++; return e.frame < 8; });
@@ -555,22 +628,34 @@ function drawTitle() {
 }
 
 function drawSetup() {
-  drawTextCentered("HOW MANY PLAYERS?", Math.floor(ROWS / 2) - 4, C.white, true);
+  const cy = Math.floor(ROWS / 2);
+  drawTextCentered("HOW MANY PLAYERS?", cy - 5, C.white, true);
+  drawTextCentered("Up/Down to change players", cy - 3, C.dim);
 
-  const ships = [];
-  for (let i = 0; i < 4; i++) {
-    const active = i < numPlayers;
-    const cfg = PLAYER_CONFIGS[i];
-    const col = Math.floor(COLS / 2) - 16 + i * 10;
-    const row = Math.floor(ROWS / 2);
-    drawText(cfg.ship, col, row, active ? cfg.color : C.dim, active);
-    drawText(cfg.name, col + 1, row + 1, active ? cfg.color : C.dim, active);
+  if (numPlayers === 1) {
+    // Solo mode: show control scheme picker
+    drawTextCentered(`< ${numPlayers} Player - SOLO >`, cy - 1, C.yellow, true);
+
+    const schemeLabels = ["A/D + W", "Arrows + Up", "J/L + I", "Numpad 4/6/8"];
+    const cfg = PLAYER_CONFIGS[soloScheme];
+    drawText(cfg.ship, Math.floor(COLS / 2) - 3, cy + 1, cfg.color, true);
+    drawTextCentered(`< ${schemeLabels[soloScheme]} >`, cy + 3, cfg.color, true);
+    drawTextCentered("Left/Right to pick controls", cy + 5, C.dim);
+  } else {
+    drawTextCentered(`< ${numPlayers} Players >`, cy - 1, C.yellow, true);
+
+    for (let i = 0; i < 4; i++) {
+      const active = i < numPlayers;
+      const cfg = PLAYER_CONFIGS[i];
+      const col = Math.floor(COLS / 2) - 16 + i * 10;
+      drawText(cfg.ship, col, cy + 1, active ? cfg.color : C.dim, active);
+      drawText(cfg.name, col + 1, cy + 2, active ? cfg.color : C.dim, active);
+    }
   }
 
-  drawTextCentered(`< ${numPlayers} >`, Math.floor(ROWS / 2) - 1, C.yellow, true);
-  drawTextCentered("Arrow keys to change, SPACE to start", Math.floor(ROWS / 2) + 4, C.dim);
+  drawTextCentered("SPACE to start", cy + 7, C.yellow);
   const snd = soundEnabled ? "ON" : "OFF";
-  drawTextCentered(`M: Sound ${snd}  |  ESC: Back`, Math.floor(ROWS / 2) + 6, C.dim);
+  drawTextCentered(`M: Sound ${snd}  |  ESC: Back`, cy + 9, C.dim);
 }
 
 function drawCountdown() {
@@ -671,6 +756,9 @@ function drawGame() {
   // Bullets
   for (const b of bullets) {
     drawText("|", Math.round(b.x), Math.round(b.y), b.color, true);
+  }
+  for (const b of enemyBullets) {
+    drawText("!", Math.round(b.x), Math.round(b.y), C.red, true);
   }
 
   // Explosions

@@ -206,6 +206,7 @@ class GameState:
         self.players = []
         self.invaders = []
         self.bullets = []
+        self.enemy_bullets = []
         self.bonuses = []
         self.explosions = []
         self.wave = 0
@@ -215,6 +216,7 @@ class GameState:
         self.countdown_start = 0
         self.countdown_num = 3
         self.wave_end_time = 0
+        self.last_enemy_shot = 0
         self.player_inputs = {}
         self.pending_sounds = []
 
@@ -271,6 +273,7 @@ class GameState:
             p["combo"] = 0
         self.bullets = []
         self.invaders = []
+        self.enemy_bullets = []
         self.bonuses = []
         self.explosions = []
         self.reposition_players()
@@ -280,7 +283,9 @@ class GameState:
         self.state = "playing"
         self.bullets = []
         self.invaders = []
+        self.enemy_bullets = []
         self.bonuses = []
+        self.last_enemy_shot = time.time()
         self.invaders_to_spawn = 15 + self.wave * 8
         self.spawn_interval = max(0.15, 0.6 - self.wave * 0.06)
         self.spawn_timer = time.time()
@@ -380,6 +385,60 @@ class GameState:
 
         # Move bonuses
         self.bonuses = [bd for bd in self.bonuses if self._move_bonus(bd, dt)]
+
+        # Invader shooting (random, not aimed)
+        shot_interval = max(0.3, 1.2 - self.wave * 0.1)
+        if t - self.last_enemy_shot >= shot_interval:
+            self.last_enemy_shot = t
+            shooters = [inv for inv in self.invaders if inv["active"] and 2 < inv["y"] < ROWS - 5]
+            if shooters:
+                shooter = random.choice(shooters)
+                self.enemy_bullets.append({
+                    "x": round(shooter["x"]) + INV_W // 2,
+                    "y": shooter["y"] + 1,
+                })
+
+        # Move enemy bullets down
+        self.enemy_bullets = [b for b in self.enemy_bullets if self._move_enemy_bullet(b, dt)]
+
+        # Enemy bullets vs invaders (friendly fire!)
+        for bi in range(len(self.enemy_bullets) - 1, -1, -1):
+            if bi >= len(self.enemy_bullets):
+                continue
+            b = self.enemy_bullets[bi]
+            for inv in self.invaders:
+                if not inv["active"]:
+                    continue
+                ix, iy = round(inv["x"]), round(inv["y"])
+                by = round(b["y"])
+                if b["x"] >= ix and b["x"] <= ix + INV_W and by >= iy - 1 and by <= iy:
+                    inv["hp"] -= 1
+                    self.enemy_bullets.pop(bi)
+                    if inv["hp"] <= 0:
+                        inv["active"] = False
+                        self.explosions.append({"x": ix, "y": iy, "f": 0, "color": "red"})
+                        self.pending_sounds.append("kill")
+                    break
+
+        # Enemy bullets vs players
+        for bi in range(len(self.enemy_bullets) - 1, -1, -1):
+            if bi >= len(self.enemy_bullets):
+                continue
+            b = self.enemy_bullets[bi]
+            for p in self.players:
+                if not p["alive"]:
+                    continue
+                px = round(p["x"])
+                by = round(b["y"])
+                if by >= p["y"] - 1 and by <= p["y"] and b["x"] >= px and b["x"] <= px + SHIP_W:
+                    p["hp"] -= 3
+                    self.explosions.append({"x": px, "y": p["y"], "f": 0, "color": "red"})
+                    self.pending_sounds.append("player_hit")
+                    self.enemy_bullets.pop(bi)
+                    if p["hp"] <= 0:
+                        p["hp"] = 0
+                        p["alive"] = False
+                    break
 
         # Explosions
         self.explosions = [e for e in self.explosions if self._tick_explosion(e)]
@@ -481,6 +540,10 @@ class GameState:
         b["y"] -= 0.6 * dt * 60
         return b["y"] >= 0
 
+    def _move_enemy_bullet(self, b, dt):
+        b["y"] += 0.25 * dt * 60
+        return b["y"] < ROWS
+
     def _move_bonus(self, bd, dt):
         bd["y"] += 0.15 * dt * 60
         return bd["y"] < ROWS
@@ -511,6 +574,7 @@ class GameState:
                 "color": inv["color"],
             } for inv in self.invaders if inv["active"]],
             "bullets": [{"x": b["x"], "y": round(b["y"], 1), "owner": b["owner"], "color": b["color"]} for b in self.bullets],
+            "ebullets": [{"x": b["x"], "y": round(b["y"], 1)} for b in self.enemy_bullets],
             "bonuses": [{"x": bd["x"], "y": round(bd["y"], 1), "char": bd["char"], "color": bd["color"]} for bd in self.bonuses],
             "explosions": [{"x": e["x"], "y": e["y"], "f": e["f"], "color": e["color"]} for e in self.explosions],
             "snd": self.pending_sounds[:],
@@ -670,6 +734,8 @@ class Renderer:
     def _draw_bullets(self, snap):
         for b in snap.get("bullets", []):
             self._put(round(b["y"]), round(b["x"]), "|", self._attr(b["color"], True))
+        for b in snap.get("ebullets", []):
+            self._put(round(b["y"]), round(b["x"]), "!", self._attr("red", True))
 
     def _draw_explosions(self, snap):
         boom = ["*", "\\*/", " . "]
