@@ -291,7 +291,7 @@ function update() {
   }
 
   if (state === "setup") {
-    if (consumePress("ArrowLeft") || consumePress("KeyA")) numPlayers = Math.max(2, numPlayers - 1);
+    if (consumePress("ArrowLeft") || consumePress("KeyA")) numPlayers = Math.max(1, numPlayers - 1);
     if (consumePress("ArrowRight") || consumePress("KeyD")) numPlayers = Math.min(4, numPlayers + 1);
     if (consumePress("Space") || consumePress("Enter")) startCountdown();
     if (consumePress("Escape")) state = "title";

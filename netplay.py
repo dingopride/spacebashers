@@ -4,6 +4,8 @@
 Usage:
   python3 netplay.py host [--port 7777]
   python3 netplay.py join <ip> [--port 7777] [--name YourName]
+
+Host supports 1-4 players. Start solo by pressing SPACE with no one joined.
 """
 
 import curses
@@ -761,7 +763,7 @@ class HostServer:
                     elif key == ord("m"):
                         sfx.toggle()
                     elif key == ord(" ") or key == ord("\n"):
-                        if self.game.state == "lobby" and len(self.game.players) >= 2:
+                        if self.game.state == "lobby" and len(self.game.players) >= 1:
                             self.game.start_countdown()
                         elif self.game.state == "results":
                             self.game.start_countdown()
@@ -780,7 +782,7 @@ class HostServer:
                 # Draw
                 if self.game.state == "lobby":
                     names = [p["name"] for p in self.game.players]
-                    need = "Press SPACE to start!" if len(names) >= 2 else "Need at least 2 players"
+                    need = "Press SPACE to start!" if len(names) >= 1 else "Waiting for players..."
                     renderer.draw_lobby(names, f"{lobby_msg}\n{need}")
                 elif self.latest_snap:
                     renderer.draw_state(self.latest_snap, self.my_id)

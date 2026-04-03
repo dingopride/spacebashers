@@ -1,15 +1,61 @@
 # SpaceBashers
 
-A terminal Space Invaders game built with Python curses. No dependencies required.
+Space Invaders, reimagined for the terminal by someone who probably should have stopped three features ago but didn't. No dependencies. No frameworks. No excuses.
 
 ![Python 3.6+](https://img.shields.io/badge/python-3.6%2B-blue)
 ![macOS](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+![Engineered to Perfection](https://img.shields.io/badge/engineered-to%20perfection-blueviolet)
 
-### [>>> PLAY IN YOUR BROWSER (2-4 Players) <<<](https://0xdingo.github.io/spacebashers/)
+### [>>> PLAY IN YOUR BROWSER (1-4 Players) <<<](https://0xdingo.github.io/spacebashers/)
 
-## Browser Multiplayer (Hungry Hungry Hippos Edition)
+---
 
-2-4 players crowd around one keyboard. Invaders rain down in waves. Everybody shoots. Most kills wins. Friendships end.
+## Table of Contents
+
+- [Three Ways to Play](#three-ways-to-play)
+- [Browser Edition](#browser-edition)
+- [Terminal Classic](#terminal-classic)
+- [Network Multiplayer](#network-multiplayer)
+- [System Architecture](#system-architecture)
+- [The Sound Engine](#the-sound-engine)
+- [Network Protocol](#network-protocol)
+- [Game Mechanics Deep Dive](#game-mechanics-deep-dive)
+- [The Commit Log](#the-commit-log)
+
+---
+
+## Three Ways to Play
+
+```mermaid
+graph LR
+    A[SpaceBashers] --> B["index.html<br/>Browser 1-4P Local"]
+    A --> C["spacebashers.py<br/>Terminal Classic 1P"]
+    A --> D["netplay.py<br/>Terminal 1-4P Network"]
+
+    B --> E["HTML5 Canvas<br/>Web Audio API"]
+    C --> F["Python curses<br/>afplay Sound"]
+    D --> G["Python curses<br/>TCP Sockets<br/>afplay Sound"]
+
+    style A fill:#1a1a2e,stroke:#00ff00,color:#00ff00
+    style B fill:#1a1a2e,stroke:#00cccc,color:#00cccc
+    style C fill:#1a1a2e,stroke:#cccc00,color:#cccc00
+    style D fill:#1a1a2e,stroke:#ff44ff,color:#ff44ff
+```
+
+| Mode | File | Players | Requires |
+|---|---|---|---|
+| Browser | `index.html` | 1-4 local | Any modern browser |
+| Terminal Classic | `spacebashers.py` | 1 | Python 3.6+, terminal with curses |
+| Network Multiplayer | `netplay.py` | 1-4 over LAN | Python 3.6+, terminal with curses |
+
+---
+
+## Browser Edition
+
+Open `index.html` or visit [0xdingo.github.io/spacebashers](https://0xdingo.github.io/spacebashers/).
+
+1-4 players crowd around one keyboard. Invaders rain down in waves. Everybody shoots. Most kills wins.
 
 ### Controls
 
@@ -20,65 +66,637 @@ A terminal Space Invaders game built with Python curses. No dependencies require
 | P3 (orange) | `J` / `L` | `I` |
 | P4 (magenta) | Numpad `4` / `6` | Numpad `8` |
 
-`M` toggles sound.
+`M` toggles sound. Select 1-4 players on the setup screen.
+
+### Game Flow
+
+```mermaid
+stateDiagram-v2
+    [*] --> Title
+    Title --> Setup: SPACE
+    Setup --> Countdown: SPACE
+    Countdown --> Playing: 3..2..1..GO
+    Playing --> WaveEnd: All invaders cleared / all players dead
+    WaveEnd --> Playing: Next wave (if waves remain)
+    WaveEnd --> Results: Wave 5 complete or all dead
+    Results --> Title: Q
+    Results --> Setup: SPACE
+```
 
 ### Powerups
 
-| Drop | Effect |
-|---|---|
-| `+` green | Heal 3 HP |
-| `x` yellow | Double points for 6s |
-| `!` red | Rapid fire for 6s |
-| `*` magenta | Steal 3% of leader's score per kill for 6s |
+Killed invaders have a 12% chance to drop a powerup. Powerups fall toward the bottom and are collected on contact.
 
-Build **combos** with fast consecutive kills for bonus points!
+| Drop | Char | Color | Effect | Duration |
+|---|---|---|---|---|
+| Heal | `+` | green | Restore 3 HP | Instant |
+| Double | `x` | yellow | 2x points per kill | 6 seconds |
+| Rapid | `!` | red | Fire cooldown drops from 150ms to 60ms | 6 seconds |
+| Steal | `*` | magenta | Each kill steals 3% of the richest opponent's score | 6 seconds |
 
-### How It Works
+```mermaid
+flowchart TD
+    A[Invader Killed] --> B{Random < 0.12?}
+    B -->|No| C[No drop]
+    B -->|Yes| D[Spawn random powerup]
+    D --> E[Powerup falls at 0.15 units/frame]
+    E --> F{Player contact?}
+    F -->|No| G{Reached bottom?}
+    G -->|Yes| H[Despawn]
+    G -->|No| E
+    F -->|Yes| I{Type?}
+    I -->|HP| J["+3 HP (capped at max)"]
+    I -->|Double| K["2x points for 6s"]
+    I -->|Rapid| L["Fire rate 2.5x for 6s"]
+    I -->|Steal| M["Siphon 3% per kill for 6s"]
+```
 
-- 5 waves of increasingly chaotic invaders
-- Invaders wobble down from the top -- if they reach the bottom, nearest player takes damage
-- Multi-hit invaders in later waves (HP pips shown above them)
-- Score, HP bar, combo counter, and active powerup shown per player
-- Wave summary after each round, final scoreboard at the end
+---
 
-## Terminal Singleplayer
+## Terminal Classic
 
 ```bash
 python3 spacebashers.py
 ```
 
+The original. Where it all began. A love letter to 1978 rendered in Unicode box-drawing characters and hubris.
+
 | Key | Action |
 |---|---|
-| `←` `→` or `A` `D` | Move |
-| `Space` | Fire |
+| `←` `→` or `A` `D` | Move ship |
+| `Space` | Fire (hold to rapid-fire) |
 | `P` | Pause |
 | `M` | Toggle sound |
 | `Q` | Quit |
 
-Classic mode with barriers, mystery ship, HP system, and level progression. Requires Python 3.6+ and a terminal with curses. Sound via macOS `afplay`.
+### How Classic Mode Works
 
-## Network Multiplayer (Terminal)
+```mermaid
+flowchart TD
+    A[Game Loop ~60fps] --> B[Read Input]
+    B --> C[Set move/fire flags]
+    C --> D[Apply Movement]
+    D --> E[Apply Firing with cooldown]
+    E --> F[Move Bullets]
+    F --> G[Move Invader Grid]
+    G --> H{Hit boundary?}
+    H -->|Yes| I[Drop down + reverse direction]
+    H -->|No| J[Continue lateral]
+    I --> K[Speed up based on alive count]
+    J --> K
+    K --> L[Enemy Fires from bottom row]
+    L --> M[Collision Detection]
+    M --> N[Draw Frame]
+    N --> A
+```
 
-Same hungry hungry hippos gameplay, but over the network. Pure Python stdlib, no dependencies.
+**Features:**
+- 5 rows of invaders with different sprites and point values (10/20/30 pts)
+- Mystery ship flyovers for bonus points (50-300 pts)
+- 4 destructible barriers with arch cutouts
+- HP system with color-coded health bar (10 HP, 3 damage per hit, survives 3 hits)
+- Invaders accelerate as their numbers thin: `speed = max(0.05, 0.5 * alive/total)`
+- Procedurally generated retro sound effects via macOS `afplay`
+- Level progression: each cleared wave increases invader speed and enemy fire rate
 
-**Host a game:**
+### Invader Grid Layout
+
+```
+Row 0:  (@@) (@@) (@@) (@@) (@@) (@@) (@@) (@@)   30 pts  white
+Row 1:  <**> <**> <**> <**> <**> <**> <**> <**>   20 pts  cyan
+Row 2:  <**> <**> <**> <**> <**> <**> <**> <**>   20 pts  cyan
+Row 3:  /\/\ /\/\ /\/\ /\/\ /\/\ /\/\ /\/\ /\/\   10 pts  yellow
+Row 4:  /\/\ /\/\ /\/\ /\/\ /\/\ /\/\ /\/\ /\/\   10 pts  yellow
+
+                    ####    ####    ####    ####          barriers
+                    ####    ####    ####    ####
+                    ##  ##  ##  ##  ##  ##  ##  ##
+
+                         /^\                              you
+```
+
+---
+
+## Network Multiplayer
+
+Same hungry hungry hippos gameplay as the browser edition, but over the network via TCP. Pure Python stdlib. Zero dependencies. We implemented a custom client-server architecture with authoritative host simulation, state snapshot broadcasting, and buffered stream parsing for a game about shooting ASCII aliens in a terminal. We regret nothing.
+
+### Quick Start
+
+**Host a game (also plays as P1):**
 ```bash
 python3 netplay.py host [--port 7777]
 ```
-Displays your LAN IP on startup. Press SPACE when 2-4 players have joined.
+Displays your LAN IP on startup. Press SPACE to start -- works solo or with up to 3 others.
 
 **Join a game:**
 ```bash
 python3 netplay.py join 192.168.1.X [--port 7777] [--name YourName]
 ```
 
-Host controls: `A`/`D` + `W` to fire, `SPACE` to start rounds, `M` sound, `Q` quit. Clients use the same movement/fire keys.
+### Controls
+
+All players use the same keys: `A`/`D` to move, `W` or `↑` to fire. `M` toggles sound. `Q` quits.
+
+Host presses `SPACE` to start rounds and can start solo or wait for players to join.
+
+### Network Game Flow
+
+```mermaid
+sequenceDiagram
+    participant H as Host
+    participant C1 as Client 1
+    participant C2 as Client 2
+
+    Note over H: Starts server on port 7777
+    Note over H: Displays LAN IP
+
+    C1->>H: {"t":"join","name":"Alice"}
+    H->>C1: {"t":"assign","id":1,"name":"Alice"}
+
+    C2->>H: {"t":"join","name":"Bob"}
+    H->>C2: {"t":"assign","id":2,"name":"Bob"}
+
+    Note over H: Host presses SPACE
+
+    loop Every 50ms (20Hz)
+        C1->>H: {"t":"input","l":true,"r":false,"f":true}
+        C2->>H: {"t":"input","l":false,"r":true,"f":false}
+        Note over H: Tick simulation (60Hz internally)
+        H->>C1: {"t":"state", ...full game state...}
+        H->>C2: {"t":"state", ...full game state...}
+    end
+
+    Note over C1,C2: Clients render locally + play sounds
+```
+
+---
+
+## System Architecture
+
+Three files. Three runtimes. One shared vision of what a terminal game can be if you refuse to acknowledge scope creep as a concept.
+
+### Overall Component Map
+
+```mermaid
+graph TB
+    subgraph "Browser (index.html)"
+        BInput[Keyboard Input] --> BLoop[Game Loop<br/>requestAnimationFrame]
+        BLoop --> BCanvas[Canvas Renderer]
+        BLoop --> BAudio[Web Audio API]
+    end
+
+    subgraph "Terminal Classic (spacebashers.py)"
+        TInput[curses getch] --> TLoop[Game Loop<br/>60fps sleep]
+        TLoop --> TCurses[curses Renderer]
+        TLoop --> TSound[SoundEngine<br/>afplay channels]
+    end
+
+    subgraph "Network Play (netplay.py)"
+        subgraph "Host Process"
+            HInput[curses getch] --> HMain[Main Thread<br/>Input + Render]
+            HGame[Game Thread<br/>60Hz Tick] --> HSnap[Snapshot 20Hz]
+            HSnap --> HBroadcast[Broadcast to clients]
+            HAccept[Accept Thread] --> HRecv[Per-client<br/>Receiver Threads]
+            HRecv --> HGame
+            HMain --> HGame
+        end
+
+        subgraph "Client Process"
+            CInput[curses getch] --> CMain[Main Thread<br/>Input + Render]
+            CNet[Network Thread<br/>Send 20Hz / Recv] --> CMain
+        end
+
+        HBroadcast -->|TCP JSON| CNet
+        CNet -->|TCP JSON| HRecv
+    end
+```
+
+### Host Threading Model
+
+```mermaid
+graph LR
+    subgraph "Main Thread"
+        A[curses getch] --> B[Update local input]
+        B --> C[Render latest snapshot]
+    end
+
+    subgraph "Game Thread"
+        D[Read all player inputs] --> E["Tick simulation (60Hz)"]
+        E --> F{Every 50ms?}
+        F -->|Yes| G[Generate snapshot]
+        G --> H[Broadcast to clients]
+        F -->|No| D
+    end
+
+    subgraph "Accept Thread"
+        I[socket.accept] --> J[Read join msg]
+        J --> K[Assign player ID]
+        K --> L[Spawn receiver thread]
+    end
+
+    subgraph "Receiver Thread (per client)"
+        M[recv_msgs] --> N[Update player_inputs dict]
+    end
+
+    B -->|player_inputs 0| D
+    N -->|player_inputs 1..3| D
+    G -->|latest_snap| C
+```
+
+### Client Threading Model
+
+```mermaid
+graph LR
+    subgraph "Main Thread"
+        A[curses getch] --> B[Set input flags]
+        B --> C[Read latest snapshot]
+        C --> D[Render with curses]
+        D --> E[Play sounds from snapshot]
+    end
+
+    subgraph "Network Thread"
+        F[Send input at 20Hz] --> G[recv_msgs]
+        G --> H[Store latest snapshot]
+    end
+
+    B -->|local_input| F
+    H -->|latest_snap| C
+```
+
+---
+
+## The Sound Engine
+
+Both `spacebashers.py` and `netplay.py` include an identical `SoundEngine` class that generates every sound effect from pure math at startup. No audio files. No WAV assets. No CDN. Just sine waves, noise, and an unreasonable amount of confidence that this would work. It did.
+
+The browser version achieves the same thing with Web Audio API oscillators, because we don't half-commit to anything around here.
+
+### How Terminal Sounds Work
+
+```mermaid
+flowchart TD
+    A["Game Event (shoot, kill, etc.)"] --> B[SoundEngine.play name]
+    B --> C{Sound enabled?}
+    C -->|No| D[Return]
+    C -->|Yes| E{Channel busy?}
+    E -->|Yes, short sfx| F["Skip (don't pile up)"]
+    E -->|Yes, long sfx| G[Kill previous process]
+    E -->|No| H["Spawn: afplay /tmp/.../name.wav"]
+    G --> H
+    H --> I[Store process in channels dict]
+```
+
+### WAV Generation Pipeline
+
+All sounds are generated at startup from math -- no audio files ship with the game.
+
+```mermaid
+flowchart LR
+    A[Sine wave generator] --> D[Concat samples]
+    B[Frequency sweep] --> D
+    C[White noise generator] --> D
+    D --> E["Pack as 16-bit PCM"]
+    E --> F["Write .wav to /tmp"]
+    F --> G["Play via afplay (async subprocess)"]
+```
+
+### Sound Catalog
+
+| Sound | Waveform | Frequency | Duration | Trigger |
+|---|---|---|---|---|
+| `shoot` | Sine decay | 880Hz → 440Hz | 120ms | Player fires |
+| `kill` / `invader_kill` | Square + noise | 600Hz → 300Hz + burst | 160ms | Invader destroyed |
+| `player_hit` | Noise + sine | White + 100Hz | 300ms | Player takes damage |
+| `mystery` | FM sine | 200Hz wobble ±100Hz | 400ms | Mystery ship appears |
+| `mystery_hit` | Square arpeggio | C5→E5→G5→C6 | 390ms | Mystery ship destroyed |
+| `march` | Square | 80Hz → 60Hz | 100ms | Invader grid steps |
+| `game_over` | Square descend | A4→F#4→E4→C4 | 1000ms | All HP gone |
+| `level_up` / `round_end` | Square ascend | C5→E5→G5→C6 | 600ms | Wave cleared |
+| `bonus_drop` | Sine | 1200Hz | 80ms | Powerup spawns |
+| `bonus_grab` | Square arpeggio | C5→G5→C6 | 180ms | Powerup collected |
+| `steal` | Sawtooth | 200Hz → 150Hz | 200ms | Score stolen |
+| `countdown` | Square | 440Hz | 150ms | 3.. 2.. 1.. |
+| `countdown_go` | Square | 880Hz | 300ms | GO! |
+
+### Channel System (Process Management)
+
+The naive approach spawned an `afplay` process per sound and the laptop achieved escape velocity after 60 seconds. The channel system -- born at 3 AM from the ashes of Tomas's rage-quit -- is arguably the most elegant process pool ever designed for a game that runs in a terminal. We're not saying it's production-grade. We're saying production should aspire to this.
+
+```mermaid
+flowchart TD
+    A["play('shoot')"] --> B{"channels['shoot'] alive?"}
+    B -->|Yes, short sfx| C["SKIP - don't accumulate"]
+    B -->|Yes, long sfx| D["KILL previous process"]
+    B -->|No| E["Spawn afplay"]
+    D --> E
+    E --> F["channels['shoot'] = new process"]
+
+    style C fill:#332200,stroke:#cccc00,color:#cccc00
+    style D fill:#330000,stroke:#ff3333,color:#ff3333
+    style E fill:#003300,stroke:#00ff00,color:#00ff00
+```
+
+**Max concurrent processes: 8** (one per sound name). Short sounds like `shoot` and `kill` simply skip if their channel is busy, which naturally rate-limits them. Longer sounds kill the previous instance.
+
+---
+
+## Network Protocol
+
+Yes, we wrote a custom network protocol for a terminal game. Yes, it was necessary. No, we will not be using WebSockets like normal people.
+
+### Wire Format
+
+Newline-delimited JSON over TCP. Every message is a single JSON object followed by `\n`. Simple, debuggable, and you can literally `nc` into a game server and watch the state fly by in your terminal. Not that we've done that. Okay, we've done that.
+
+```
+{"t":"input","l":true,"r":false,"f":true}\n
+{"t":"state","st":"playing","wave":2,...}\n
+```
+
+Nagle's algorithm is disabled (`TCP_NODELAY`) for low latency.
+
+### Message Types
+
+```mermaid
+graph LR
+    subgraph "Client → Host"
+        A["join<br/>{t:join, name:str}"]
+        B["input<br/>{t:input, l:bool, r:bool, f:bool}"]
+        C["quit<br/>{t:quit}"]
+    end
+
+    subgraph "Host → Client"
+        D["assign<br/>{t:assign, id:int, name:str}"]
+        E["state<br/>{t:state, st:str, players:[], invaders:[], bullets:[], bonuses:[], explosions:[], snd:[]}"]
+        F["kicked<br/>{t:kicked, reason:str}"]
+    end
+```
+
+### State Snapshot Structure
+
+The `state` message is the heart of the protocol. Broadcast at 20Hz, it contains the entire renderable game state:
+
+```json
+{
+  "t": "state",
+  "st": "playing",
+  "wave": 3,
+  "tw": 5,
+  "players": [
+    {
+      "id": 0, "name": "Host", "color": "green",
+      "ship": " /^\\ ",
+      "x": 40.0, "y": 37,
+      "hp": 7, "mhp": 10,
+      "score": 1250, "kills": 23,
+      "alive": true,
+      "pw": "rapid", "combo": 4,
+      "last_kill": 1234.5
+    }
+  ],
+  "invaders": [
+    {"x": 30.5, "y": 12.3, "sp": "(@@)", "hp": 1, "mhp": 2, "color": "cyan"}
+  ],
+  "bullets": [
+    {"x": 42, "y": 20.5, "owner": 0, "color": "green"}
+  ],
+  "bonuses": [
+    {"x": 25, "y": 18.2, "char": "+", "color": "green"}
+  ],
+  "explosions": [
+    {"x": 30, "y": 12, "f": 2, "color": "green"}
+  ],
+  "snd": ["kill", "shoot"],
+  "cn": 0
+}
+```
+
+The `snd` array contains sound effect names that fired since the last snapshot. Clients play these locally so audio stays in sync without separate sound messages.
+
+### Connection Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant H as Host
+
+    C->>H: TCP connect
+    C->>H: {"t":"join","name":"Alice"}
+
+    alt Game full or in progress
+        H->>C: {"t":"kicked","reason":"Game full"}
+        H--xC: Close connection
+    else Accepted
+        H->>C: {"t":"assign","id":1,"name":"Alice"}
+        Note over H: Spawns receiver thread for client
+
+        loop Game in progress
+            C->>H: {"t":"input",...} (20Hz)
+            H->>C: {"t":"state",...} (20Hz)
+        end
+
+        alt Client quits
+            C->>H: {"t":"quit"}
+            Note over H: Mark player dead, close socket
+        else Client disconnects
+            Note over H: recv returns empty, mark player dead
+        else Host quits
+            Note over C: recv returns None, show error
+        end
+    end
+```
+
+### Buffered Receive Protocol
+
+TCP is a stream protocol. Messages may arrive fragmented or concatenated. Most people learn this the hard way in production at 2 AM. We learned it the hard way in a terminal game at 2 AM, which is arguably worse. The `recv_msgs` function handles this correctly on the first try (it was not the first try):
+
+```mermaid
+flowchart TD
+    A["recv(65536) into buffer"] --> B{"Buffer contains \\n?"}
+    B -->|No| C[Return empty list<br/>partial data stays in buffer]
+    B -->|Yes| D[Split on first \\n]
+    D --> E[Parse left side as JSON]
+    E --> F[Remainder stays in buffer]
+    F --> B
+    C --> G[Next call continues from buffer]
+```
+
+This ensures no data loss even when TCP delivers partial messages or multiple messages in a single `recv`.
+
+---
+
+## Game Mechanics Deep Dive
+
+Every number in this section was the result of extensive playtesting, heated debate, and at least one broken engagement. The tuning is tight. Trust the tuning.
+
+### Scoring System
+
+```mermaid
+flowchart TD
+    A[Kill Invader] --> B[Base Points]
+    B --> C{"Powerup active?"}
+    C -->|Double| D["pts × 2"]
+    C -->|None| E["pts × 1"]
+    D --> F[Combo Bonus]
+    E --> F
+    F --> G["+ (combo - 1) × 5"]
+    G --> H{"Steal active?"}
+    H -->|Yes| I["+ 3% of richest opponent's score"]
+    H -->|No| J[Final Score Added]
+    I --> J
+```
+
+### Combo System
+
+Kills within 1.5 seconds of each other build a combo chain.
+
+```mermaid
+graph LR
+    A["Kill at t=0"] -->|"< 1.5s"| B["Kill at t=0.8<br/>combo=2<br/>+5 bonus"]
+    B -->|"< 1.5s"| C["Kill at t=1.5<br/>combo=3<br/>+10 bonus"]
+    C -->|"> 1.5s"| D["Kill at t=4.0<br/>combo resets to 1"]
+```
+
+Max combo: 10x (+45 bonus per kill).
+
+### Wave Scaling
+
+Each wave spawns more invaders that are harder to kill.
+
+| Wave | Invaders | Spawn Interval | Invader HP | Base Speed |
+|---|---|---|---|---|
+| 1 | 23 | 0.54s | 1 | 0.025 |
+| 2 | 31 | 0.48s | 1 | 0.030 |
+| 3 | 39 | 0.42s | 2 | 0.035 |
+| 4 | 47 | 0.36s | 2 | 0.040 |
+| 5 | 55 | 0.30s | 2 | 0.045 |
+
+Formula:
+- Invaders per wave: `15 + wave × 8`
+- Spawn interval: `max(0.15, 0.6 - wave × 0.06)` seconds
+- Invader HP: `1 + floor(wave / 3)`
+- Base fall speed: `0.02 + wave × 0.005` units/tick
+
+### Invader Movement
+
+Unlike classic mode's rigid grid, multiplayer invaders fall independently with sinusoidal wobble:
+
+```mermaid
+flowchart LR
+    A["Spawn at random x, y=-1"] --> B["Each tick:"]
+    B --> C["y += speed × dt × 60"]
+    B --> D["wobblePhase += 0.1 × dt × 60"]
+    B --> E["x += sin(wobblePhase) × wobble × dt × 60"]
+    C --> F{"y >= ROWS - 2?"}
+    F -->|Yes| G["Damage nearest player (-2 HP)<br/>Despawn"]
+    F -->|No| B
+```
+
+### HP and Damage
+
+```mermaid
+flowchart TD
+    A[Player Starts] --> B["HP: 10 / 10"]
+    B --> C{"Damage Source"}
+    C -->|"Enemy bullet (classic)"| D["-3 HP"]
+    C -->|"Invader reaches bottom (multi)"| E["-2 HP"]
+    D --> F{"HP <= 0?"}
+    E --> F
+    F -->|Yes| G[Player Dies]
+    F -->|No| H[Continue Playing]
+
+    style B fill:#003300,stroke:#00ff00,color:#00ff00
+    style G fill:#330000,stroke:#ff3333,color:#ff3333
+```
+
+HP bar color thresholds: green (>6), yellow (>3), red (<=3).
+
+### Classic Mode Invader Speed
+
+The invader grid accelerates as aliens are destroyed:
+
+```mermaid
+graph LR
+    A["40/40 alive<br/>speed = 0.50s"] --> B["30/40 alive<br/>speed = 0.375s"]
+    B --> C["20/40 alive<br/>speed = 0.25s"]
+    C --> D["10/40 alive<br/>speed = 0.125s"]
+    D --> E["1/40 alive<br/>speed = 0.05s<br/>(PANIC MODE)"]
+```
+
+Formula: `speed = max(0.05, 0.5 × alive/total)` seconds between grid steps.
+
+---
+
+## Requirements
+
+| Component | Requirement |
+|---|---|
+| Browser | Any modern browser (Chrome, Firefox, Safari, Edge) |
+| Terminal | Python 3.6+, terminal with curses support |
+| Sound (terminal) | macOS with `afplay` (game runs silently elsewhere) |
+| Network | LAN connectivity, TCP port 7777 (configurable) |
 
 ---
 
 ## Commit Log
 
 What follows is the unabridged development history of SpaceBashers, reconstructed from git, Jira, Slack archives, two restraining orders, and one therapist's notes (shared with written consent).
+
+```mermaid
+gitGraph
+    commit id: "init"
+    commit id: "game loop"
+    commit id: "flickering is load-bearing"
+    branch curses-migration
+    commit id: "RFC: curses"
+    commit id: "jennifer: absolutely not"
+    commit id: "marcus: i know where you live"
+    commit id: "jennifer: fine"
+    checkout main
+    merge curses-migration id: "curses merged"
+    commit id: "addstr crashes on bottom-right cell"
+    commit id: "try/except curses.error everywhere"
+    commit id: "marcus rage-quits (keeps yubikey)"
+    commit id: "revoke marcus access"
+    branch ux-research
+    commit id: "11 weeks of A/B testing"
+    commit id: "4-4 deadlock on ship sprite"
+    commit id: "jennifer publishes 200-page paper"
+    commit id: "jennifer takes espresso machine"
+    checkout main
+    merge ux-research id: "using her sprite. its good."
+    branch sound-engine
+    commit id: "custom FM synthesis"
+    commit id: "sounds now sound like things"
+    commit id: "400 afplay processes (laptop liftoff)"
+    commit id: "tomas: i expected better. goodbye."
+    checkout main
+    merge sound-engine id: "channel-based sound (3am rewrite)"
+    branch hp-debate
+    commit id: "SPBASH-4471: propose HP system"
+    commit id: "this will be calm and productive"
+    commit id: "847 comments later"
+    commit id: "wedding is off"
+    commit id: "derek: i was right about 3 from 10"
+    commit id: "rachel: keeping the ring"
+    checkout main
+    merge hp-debate id: "HP: 3 damage from 10"
+    commit id: "kevin: moon-phase barriers RFC"
+    commit id: "kevin no"
+    commit id: "kevin: taking PTO"
+    commit id: "kevin: back (made moon tetris)"
+    branch movement-fix
+    commit id: "hire philosophy consultant"
+    commit id: "90-page epistemology paper"
+    commit id: "paper wins minor award"
+    checkout main
+    merge movement-fix id: "6 lines of code. 47 weeks."
+    commit id: "v1.0: it works"
+    commit id: "push to github"
+    commit id: "multiplayer (more friendships destroyed)"
+    commit id: "netplay (the LAN party update)"
+```
 
 ```
 commit a1b2c3d
@@ -549,25 +1167,24 @@ Date:   Tue Mar 25 03:47:00 2025 -0500
 ```
 commit b7c8d9e
 Author: diNGo <dingo@usomad.me>
-Date:   Wed Apr 1 19:22:00 2026 -0500
+Date:   Wed Apr 2 01:15:00 2026 -0500
 
-    push to github. mass-close jira. mass-delete slack.
-    we're done. we're finally done.
+    v2.0: multiplayer. because the single-player mode wasn't
+    destroying enough friendships.
 
-    this game is one python file. zero dependencies.
-    it took five and a half years.
+    added hungry hungry hippos mode: 1-4 players, invaders
+    rain from the sky, everyone fights for kills. powerups,
+    combos, score stealing. browser version AND network play.
 
-    to everyone who committed, who believed, who argued
-    about ASCII alignment in a terminal window at 2am:
-    you are not forgotten. your commits live in the reflog
-    even if they were squashed.
+    derek called. he wants to know if rachel is playing.
+    we told him to touch grass. he said the grass reminds
+    him of the green HP bar. we hung up.
 
-    marcus: the alpacas look great man. no hard feelings.
+    SPBASH-1 remains open.
 
- =============================================
-  spacebashers.py | 626 +++++++++++++++++++++
-  1 file changed, 626 insertions(+)
- =============================================
+ A index.html  | 477 +++++++++++++++++++++
+ A netplay.py  | 1099 ++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 1576 insertions(+)
 
     maintained by diNGo. the last one standing.
 ```
