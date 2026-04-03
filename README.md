@@ -5,41 +5,57 @@ A terminal Space Invaders game built with Python curses. No dependencies require
 ![Python 3.6+](https://img.shields.io/badge/python-3.6%2B-blue)
 ![macOS](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
-### [>>> PLAY IN YOUR BROWSER <<<](https://0xdingo.github.io/spacebashers/)
+### [>>> PLAY IN YOUR BROWSER (2-4 Players) <<<](https://0xdingo.github.io/spacebashers/)
 
-## Quick Start (Terminal)
+## Browser Multiplayer (Hungry Hungry Hippos Edition)
+
+2-4 players crowd around one keyboard. Invaders rain down in waves. Everybody shoots. Most kills wins. Friendships end.
+
+### Controls
+
+| Player | Move | Fire |
+|---|---|---|
+| P1 (green) | `A` / `D` | `W` |
+| P2 (cyan) | `←` / `→` | `↑` |
+| P3 (orange) | `J` / `L` | `I` |
+| P4 (magenta) | Numpad `4` / `6` | Numpad `8` |
+
+`M` toggles sound.
+
+### Powerups
+
+| Drop | Effect |
+|---|---|
+| `+` green | Heal 3 HP |
+| `x` yellow | Double points for 6s |
+| `!` red | Rapid fire for 6s |
+| `*` magenta | Steal 3% of leader's score per kill for 6s |
+
+Build **combos** with fast consecutive kills for bonus points!
+
+### How It Works
+
+- 5 waves of increasingly chaotic invaders
+- Invaders wobble down from the top -- if they reach the bottom, nearest player takes damage
+- Multi-hit invaders in later waves (HP pips shown above them)
+- Score, HP bar, combo counter, and active powerup shown per player
+- Wave summary after each round, final scoreboard at the end
+
+## Terminal Singleplayer
 
 ```bash
 python3 spacebashers.py
 ```
 
-## Controls
-
 | Key | Action |
 |---|---|
-| `←` `→` or `A` `D` | Move ship |
-| `Space` | Fire (hold to rapid-fire) |
+| `←` `→` or `A` `D` | Move |
+| `Space` | Fire |
 | `P` | Pause |
 | `M` | Toggle sound |
 | `Q` | Quit |
 
-Move and fire work simultaneously.
-
-## Features
-
-- 5 rows of invaders with different sprites and point values (10/20/30 pts)
-- Mystery ship flyovers for bonus points (50-300 pts)
-- 4 destructible barriers with arch cutouts
-- HP system with a color-coded health bar (survives 3 hits)
-- Invaders speed up as you destroy them
-- Procedurally generated retro sound effects (macOS `afplay`)
-- Level progression with increasing difficulty
-
-## Requirements
-
-- Python 3.6+
-- A terminal that supports curses (most do)
-- macOS for sound effects (game works silently on other platforms)
+Classic mode with barriers, mystery ship, HP system, and level progression. Requires Python 3.6+ and a terminal with curses. Sound via macOS `afplay`.
 
 ---
 

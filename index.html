@@ -30,14 +30,13 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
 // --- Layout ---
-const COLS = 80;
-const ROWS = 40;
+const COLS = 100;
+const ROWS = 45;
 const CELL_W = 10;
 const CELL_H = 16;
 canvas.width = COLS * CELL_W;
 canvas.height = ROWS * CELL_H;
 
-// Scale canvas to fit viewport
 function fitCanvas() {
   const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height, 1);
   canvas.style.width = (canvas.width * scale) + "px";
@@ -51,12 +50,23 @@ const C = {
   bg: "#000000",
   green: "#00ff00",
   white: "#ffffff",
-  cyan: "#00cccc",
-  yellow: "#cccc00",
-  red: "#ff0000",
-  magenta: "#ff00ff",
+  cyan: "#00dddd",
+  yellow: "#dddd00",
+  red: "#ff3333",
+  magenta: "#ff44ff",
+  orange: "#ff8800",
+  blue: "#4488ff",
   dim: "#555555",
 };
+
+// Player colors and config
+const PLAYER_CONFIGS = [
+  { name: "P1", color: C.green,   ship: " /^\\ ", left: "KeyA",       right: "KeyD",       fire: "KeyW"    },
+  { name: "P2", color: C.cyan,    ship: " /^\\ ", left: "ArrowLeft",  right: "ArrowRight", fire: "ArrowUp" },
+  { name: "P3", color: C.orange,  ship: " /^\\ ", left: "KeyJ",       right: "KeyL",       fire: "KeyI"    },
+  { name: "P4", color: C.magenta, ship: " /^\\ ", left: "Numpad4",    right: "Numpad6",    fire: "Numpad8" },
+];
+const SHIP_W = 5;
 
 // --- Sound Engine ---
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -99,14 +109,16 @@ function playNoise(duration, vol = 0.1) {
 }
 
 const sfx = {
-  shoot() { playTone(880, 0.08, 0.1); setTimeout(() => playTone(440, 0.04, 0.08), 60); },
-  invaderKill() { playTone(600, 0.05, 0.12, "square", false); setTimeout(() => { playTone(300, 0.05, 0.1); playNoise(0.06, 0.1); }, 50); },
-  playerHit() { playNoise(0.3, 0.15); playTone(100, 0.3, 0.1, "sawtooth"); },
-  mystery() { playTone(200, 0.4, 0.08, "sine"); },
-  mysteryHit() { [523,659,784,1047].forEach((f,i) => setTimeout(() => playTone(f, 0.1, 0.1, "square", i===3), i*80)); },
-  march() { playTone(80, 0.06, 0.06, "square", false); setTimeout(() => playTone(60, 0.04, 0.05), 50); },
-  gameOver() { [440,370,330,262].forEach((f,i) => setTimeout(() => playTone(f, i===3?0.4:0.2, 0.12, "square", i===3), i*200)); },
-  levelUp() { [523,659,784,1047].forEach((f,i) => setTimeout(() => playTone(f, i===3?0.3:0.1, 0.12, "square", i===3), i*100)); },
+  shoot() { playTone(880, 0.06, 0.07); },
+  kill(pitch) { playTone(400 + pitch * 100, 0.05, 0.09, "square", false); setTimeout(() => playNoise(0.04, 0.07), 40); },
+  playerHit() { playNoise(0.2, 0.12); playTone(100, 0.2, 0.08, "sawtooth"); },
+  bonusDrop() { playTone(1200, 0.08, 0.06, "sine"); },
+  bonusGrab() { [523,784,1047].forEach((f,i) => setTimeout(() => playTone(f, 0.06, 0.08, "square"), i*50)); },
+  waveStart() { [262,330,392,523].forEach((f,i) => setTimeout(() => playTone(f, 0.08, 0.1, "square", i===3), i*80)); },
+  roundEnd() { [523,659,784,1047].forEach((f,i) => setTimeout(() => playTone(f, i===3?0.3:0.1, 0.12, "square", i===3), i*100)); },
+  countdown() { playTone(440, 0.15, 0.1, "square"); },
+  countdownGo() { playTone(880, 0.3, 0.12, "square"); },
+  steal() { playTone(200, 0.1, 0.08, "sawtooth"); playTone(150, 0.1, 0.06, "sawtooth"); },
 };
 
 // --- Text Drawing ---
@@ -120,245 +132,362 @@ function drawTextCentered(text, row, color = C.white, bold = false) {
   drawText(text, Math.floor((COLS - text.length) / 2), row, color, bold);
 }
 
-// --- Game State ---
-const INVADER_SPRITES = [
-  ["(@@)","(@@)","(@@)","(@@)","(@@)","(@@)","(@@)","(@@)"],
-  ["<**>","<**>","<**>","<**>","<**>","<**>","<**>","<**>"],
-  ["<**>","<**>","<**>","<**>","<**>","<**>","<**>","<**>"],
-  ["/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\"],
-  ["/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\","/\\/\\"],
-];
-const INV_W = 4;
-const INV_SPACING_X = 6;
-const INV_SPACING_Y = 2;
-const INV_COLS = 8;
-const SHIP = " /^\\ ";
-const SHIP_W = 5;
-const BARRIER_W = 8;
-const BARRIER_H = 3;
-const NUM_BARRIERS = 4;
+function drawRect(col, row, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(col * CELL_W, row * CELL_H, w * CELL_W, h * CELL_H);
+}
 
-let state = "title";
-let playerX, playerY;
-let bullets, enemyBullets, explosions;
-let score, hp, maxHp, level;
-let invaders, invDir, invSpeed, invOffX, invOffY, invBaseX, invBaseY;
-let lastInvMove, lastEnemyShot, enemyShotInterval;
-let mysteryShip, mysteryTimer;
-let barriers;
-let movingLeft, movingRight, firing, lastFireTime;
-const fireCooldown = 0.15;
-
+// --- Input ---
 const keys = {};
+const justPressed = {};
 document.addEventListener("keydown", e => {
+  if (!keys[e.code]) justPressed[e.code] = true;
   keys[e.code] = true;
-  if (["Space","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.code)) e.preventDefault();
-  if (state === "title" && e.code === "Space") { ensureAudio(); startGame(); }
-  else if (state === "gameover" && e.code === "Space") { startGame(); }
-  else if (state === "gameover" && (e.code === "KeyQ" || e.code === "Escape")) { state = "title"; }
-  else if (state === "playing" && e.code === "KeyP") { state = "paused"; }
-  else if (state === "paused" && e.code === "KeyP") { state = "playing"; }
-  else if (state === "playing" && e.code === "KeyM") { soundEnabled = !soundEnabled; }
-  else if (state === "paused" && e.code === "KeyM") { soundEnabled = !soundEnabled; }
+  if (["Space","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Numpad4","Numpad6","Numpad8"].includes(e.code)) e.preventDefault();
 });
 document.addEventListener("keyup", e => { keys[e.code] = false; });
 
+function consumePress(code) { if (justPressed[code]) { justPressed[code] = false; return true; } return false; }
+function clearPresses() { for (const k in justPressed) justPressed[k] = false; }
+
 function now() { return performance.now() / 1000; }
 
-function initInvaders() {
+// --- Invader Sprites ---
+const SPRITES_POOL = ["(@@)", "<**>", "/\\/\\", "{##}", "[@@]", "<==>", "(##)", "<@@>"];
+const INV_W = 4;
+
+// --- Game Modes ---
+let state = "title";       // title | setup | countdown | playing | waveEnd | results
+let numPlayers = 2;
+let players = [];
+let bullets = [];           // { x, y, owner, color }
+let invaders = [];          // { x, y, sprite, hp, points, speed, color, active }
+let bonusDrops = [];        // { x, y, type, value }
+let explosions = [];
+let wave = 0;
+let totalWaves = 5;
+let waveTimer = 0;
+let spawnTimer = 0;
+let spawnInterval = 0;
+let invadersToSpawn = 0;
+let invadersKilledThisWave = 0;
+let countdownTime = 0;
+let countdownNum = 0;
+let waveEndTimer = 0;
+
+// Bonus types
+const BONUS_TYPES = [
+  { char: "+", color: C.green,   name: "HP",    effect: "hp" },
+  { char: "x", color: C.yellow,  name: "2X",    effect: "double" },
+  { char: "!", color: C.red,     name: "RAPID", effect: "rapid" },
+  { char: "*", color: C.magenta, name: "STEAL", effect: "steal" },
+];
+
+function createPlayer(index) {
+  const cfg = PLAYER_CONFIGS[index];
+  const spacing = COLS / (numPlayers + 1);
+  return {
+    index,
+    name: cfg.name,
+    color: cfg.color,
+    ship: cfg.ship,
+    x: spacing * (index + 1) - SHIP_W / 2,
+    y: ROWS - 3,
+    hp: 10,
+    maxHp: 10,
+    score: 0,
+    kills: 0,
+    alive: true,
+    lastFire: 0,
+    fireCooldown: 0.15,
+    bulletColor: cfg.color,
+    leftKey: cfg.left,
+    rightKey: cfg.right,
+    fireKey: cfg.fire,
+    powerup: null,        // active powerup
+    powerupTimer: 0,
+    combo: 0,
+    lastKillTime: 0,
+  };
+}
+
+function spawnInvader() {
+  const sprite = SPRITES_POOL[Math.floor(Math.random() * SPRITES_POOL.length)];
+  const row = Math.floor(Math.random() * 3);  // row type for color/points
+  const x = 2 + Math.random() * (COLS - 6);
+  const baseSpeed = 0.02 + wave * 0.005;
+  const speed = baseSpeed + Math.random() * 0.02;
+  const wobble = (Math.random() - 0.5) * 0.05;
+  const colors = [C.white, C.cyan, C.yellow];
+  const points = [30, 20, 10];
+  invaders.push({
+    x, y: -1,
+    sprite,
+    hp: 1 + Math.floor(wave / 3),
+    maxHp: 1 + Math.floor(wave / 3),
+    points: points[row],
+    speed,
+    wobble,
+    wobblePhase: Math.random() * Math.PI * 2,
+    color: colors[row],
+    active: true,
+  });
+}
+
+function startSetup() {
+  state = "setup";
+}
+
+function startCountdown() {
+  state = "countdown";
+  countdownTime = now();
+  countdownNum = 3;
+  wave = 0;
+  players = [];
+  for (let i = 0; i < numPlayers; i++) players.push(createPlayer(i));
+  bullets = [];
   invaders = [];
-  invBaseX = Math.floor((COLS - INV_COLS * INV_SPACING_X) / 2);
-  invBaseY = 3;
-  invOffX = 0; invOffY = 0;
-  for (let r = 0; r < INVADER_SPRITES.length; r++) {
-    invaders.push([]);
-    for (let c = 0; c < INV_COLS; c++) invaders[r].push(true);
-  }
+  bonusDrops = [];
+  explosions = [];
 }
 
-function initBarriers() {
-  barriers = new Set();
-  const spacing = Math.floor(COLS / (NUM_BARRIERS + 1));
-  for (let i = 0; i < NUM_BARRIERS; i++) {
-    const bx = spacing * (i + 1) - Math.floor(BARRIER_W / 2);
-    const by = playerY - 5;
-    for (let dy = 0; dy < BARRIER_H; dy++) {
-      for (let dx = 0; dx < BARRIER_W; dx++) {
-        if (dy === BARRIER_H - 1 && dx >= Math.floor(BARRIER_W/4) && dx < Math.floor(BARRIER_W*3/4)) continue;
-        barriers.add(bx + dx + "," + (by + dy));
-      }
-    }
-  }
-}
-
-function startGame() {
+function startWave() {
+  wave++;
   state = "playing";
-  playerX = Math.floor(COLS / 2 - SHIP_W / 2);
-  playerY = ROWS - 3;
-  bullets = []; enemyBullets = []; explosions = [];
-  score = 0; hp = 10; maxHp = 10; level = 1;
-  invDir = 1; invSpeed = 0.5; invOffX = 0; invOffY = 0;
-  lastInvMove = now(); lastEnemyShot = now(); lastFireTime = 0;
-  enemyShotInterval = 1.0;
-  mysteryShip = null; mysteryTimer = now() + 10 + Math.random() * 15;
-  initInvaders();
-  initBarriers();
+  bullets = [];
+  invaders = [];
+  bonusDrops = [];
+  // More invaders each wave, spawned over time
+  invadersToSpawn = 15 + wave * 8;
+  invadersKilledThisWave = 0;
+  spawnInterval = Math.max(0.15, 0.6 - wave * 0.06);
+  spawnTimer = now();
+  waveTimer = now();
+  // Reset player positions
+  const spacing = COLS / (numPlayers + 1);
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    p.x = spacing * (i + 1) - SHIP_W / 2;
+    if (p.hp <= 0) { p.hp = 0; p.alive = false; }
+    p.combo = 0;
+  }
+  sfx.waveStart();
 }
 
-function invPos(r, c) {
-  return [invBaseX + c * INV_SPACING_X + invOffX, invBaseY + r * INV_SPACING_Y + invOffY];
+function endWave() {
+  state = "waveEnd";
+  waveEndTimer = now();
+  sfx.roundEnd();
 }
-
-function invColor(r) { return r === 0 ? C.white : r <= 2 ? C.cyan : C.yellow; }
-function invPoints(r) { return r === 0 ? 30 : r <= 2 ? 20 : 10; }
-function aliveCount() { let n=0; for (const row of invaders) for (const a of row) if(a) n++; return n; }
 
 // --- Update ---
 function update() {
-  if (state !== "playing") return;
   const t = now();
 
-  // Input
-  movingLeft = keys["ArrowLeft"] || keys["KeyA"];
-  movingRight = keys["ArrowRight"] || keys["KeyD"];
-  firing = keys["Space"];
-
-  if (movingLeft) playerX = Math.max(0, playerX - 0.4);
-  if (movingRight) playerX = Math.min(COLS - SHIP_W - 1, playerX + 0.4);
-
-  if (firing && bullets.length < 3 && t - lastFireTime >= fireCooldown) {
-    bullets.push({ x: Math.round(playerX) + Math.floor(SHIP_W / 2), y: playerY - 1 });
-    sfx.shoot();
-    lastFireTime = t;
+  if (state === "title") {
+    if (consumePress("Space") || consumePress("Enter")) { ensureAudio(); startSetup(); }
+    clearPresses();
+    return;
   }
 
-  // Bullets
-  bullets = bullets.filter(b => { b.y -= 0.5; return b.y >= 0; });
-  enemyBullets = enemyBullets.filter(b => { b.y += 0.3; return b.y < ROWS; });
+  if (state === "setup") {
+    if (consumePress("ArrowLeft") || consumePress("KeyA")) numPlayers = Math.max(2, numPlayers - 1);
+    if (consumePress("ArrowRight") || consumePress("KeyD")) numPlayers = Math.min(4, numPlayers + 1);
+    if (consumePress("Space") || consumePress("Enter")) startCountdown();
+    if (consumePress("Escape")) state = "title";
+    if (consumePress("KeyM")) soundEnabled = !soundEnabled;
+    clearPresses();
+    return;
+  }
+
+  if (state === "countdown") {
+    const elapsed = t - countdownTime;
+    const newNum = 3 - Math.floor(elapsed);
+    if (newNum !== countdownNum && newNum >= 0) {
+      countdownNum = newNum;
+      if (countdownNum > 0) sfx.countdown();
+      else sfx.countdownGo();
+    }
+    if (elapsed >= 3.5) startWave();
+    clearPresses();
+    return;
+  }
+
+  if (state === "waveEnd") {
+    if (t - waveEndTimer >= 3) {
+      if (wave >= totalWaves || players.every(p => !p.alive)) {
+        state = "results";
+      } else {
+        startWave();
+      }
+    }
+    clearPresses();
+    return;
+  }
+
+  if (state === "results") {
+    if (consumePress("Space") || consumePress("Enter")) state = "title";
+    if (consumePress("KeyR")) startCountdown();
+    clearPresses();
+    return;
+  }
+
+  // --- Playing ---
+  if (consumePress("KeyM")) soundEnabled = !soundEnabled;
+  clearPresses();
+
+  // Player input & movement
+  for (const p of players) {
+    if (!p.alive) continue;
+
+    if (keys[p.leftKey]) p.x = Math.max(0, p.x - 0.45);
+    if (keys[p.rightKey]) p.x = Math.min(COLS - SHIP_W - 1, p.x + 0.45);
+
+    // Powerup expiry
+    if (p.powerup && t > p.powerupTimer) p.powerup = null;
+
+    const cd = p.powerup === "rapid" ? 0.06 : p.fireCooldown;
+    if (keys[p.fireKey] && t - p.lastFire >= cd) {
+      const bx = Math.round(p.x) + Math.floor(SHIP_W / 2);
+      bullets.push({ x: bx, y: p.y - 1, owner: p.index, color: p.color });
+      sfx.shoot();
+      p.lastFire = t;
+    }
+  }
+
+  // Spawn invaders
+  if (invadersToSpawn > 0 && t - spawnTimer >= spawnInterval) {
+    spawnTimer = t;
+    spawnInvader();
+    invadersToSpawn--;
+  }
+
+  // Move bullets up
+  bullets = bullets.filter(b => { b.y -= 0.6; return b.y >= 0; });
+
+  // Move invaders down with wobble
+  for (const inv of invaders) {
+    if (!inv.active) continue;
+    inv.y += inv.speed;
+    inv.wobblePhase += 0.1;
+    inv.x += Math.sin(inv.wobblePhase) * inv.wobble;
+    inv.x = Math.max(0, Math.min(COLS - INV_W, inv.x));
+  }
+
+  // Move bonus drops
+  bonusDrops = bonusDrops.filter(bd => {
+    bd.y += 0.15;
+    return bd.y < ROWS;
+  });
 
   // Explosions
   explosions = explosions.filter(e => { e.frame++; return e.frame < 8; });
 
-  // Invader movement
-  if (t - lastInvMove >= invSpeed) {
-    lastInvMove = t;
-    let leftmost = COLS, rightmost = 0;
-    for (let r = 0; r < invaders.length; r++)
-      for (let c = 0; c < invaders[r].length; c++)
-        if (invaders[r][c]) {
-          const [x] = invPos(r, c);
-          leftmost = Math.min(leftmost, x);
-          rightmost = Math.max(rightmost, x + INV_W);
-        }
-    const testL = leftmost + invDir * 2, testR = rightmost + invDir * 2;
-    if (testL <= 1 || testR >= COLS - 1) { invOffY += 1; invDir *= -1; }
-    else invOffX += invDir * 2;
-    sfx.march();
-
-    const total = invaders.length * INV_COLS;
-    const alive = aliveCount();
-    if (alive > 0) invSpeed = Math.max(0.05, 0.5 * (alive / total));
-  }
-
-  // Enemy shooting
-  if (t - lastEnemyShot >= enemyShotInterval) {
-    lastEnemyShot = t;
-    const shooters = [];
-    for (let c = 0; c < INV_COLS; c++)
-      for (let r = invaders.length - 1; r >= 0; r--)
-        if (invaders[r][c]) { shooters.push([r, c]); break; }
-    if (shooters.length) {
-      const [r, c] = shooters[Math.floor(Math.random() * shooters.length)];
-      const [x, y] = invPos(r, c);
-      enemyBullets.push({ x: x + Math.floor(INV_W / 2), y: y + 1 });
-    }
-  }
-
-  // Mystery ship
-  if (!mysteryShip) {
-    if (t >= mysteryTimer) {
-      const d = Math.random() < 0.5 ? 1 : -1;
-      mysteryShip = { x: d === 1 ? 0 : COLS - 7, dir: d };
-      sfx.mystery();
-    }
-  } else {
-    mysteryShip.x += mysteryShip.dir * 0.3;
-    if (mysteryShip.x < -7 || mysteryShip.x > COLS) {
-      mysteryShip = null;
-      mysteryTimer = t + 10 + Math.random() * 15;
-    }
-  }
-
   // Collision: bullets vs invaders
   for (let bi = bullets.length - 1; bi >= 0; bi--) {
     const b = bullets[bi];
-    let hit = false;
-    for (let r = 0; r < invaders.length && !hit; r++)
-      for (let c = 0; c < invaders[r].length && !hit; c++) {
-        if (!invaders[r][c]) continue;
-        const [ix, iy] = invPos(r, c);
-        if (b.x >= ix && b.x <= ix + INV_W && Math.round(b.y) === iy) {
-          invaders[r][c] = false;
-          score += invPoints(r);
-          explosions.push({ x: ix, y: iy, frame: 0 });
-          sfx.invaderKill();
-          bullets.splice(bi, 1);
-          hit = true;
-        }
-      }
-    // Bullet vs mystery
-    if (!hit && mysteryShip) {
-      const mx = Math.round(mysteryShip.x);
-      if (b.x >= mx && b.x <= mx + 6 && Math.round(b.y) <= 1) {
-        const pts = [50,100,150,300][Math.floor(Math.random()*4)];
-        score += pts;
-        explosions.push({ x: mx, y: 1, frame: 0 });
-        sfx.mysteryHit();
-        mysteryShip = null;
-        mysteryTimer = t + 10 + Math.random() * 15;
+    for (let ii = invaders.length - 1; ii >= 0; ii--) {
+      const inv = invaders[ii];
+      if (!inv.active) continue;
+      const ix = Math.round(inv.x), iy = Math.round(inv.y);
+      if (b.x >= ix && b.x <= ix + INV_W && Math.round(b.y) >= iy - 1 && Math.round(b.y) <= iy) {
+        inv.hp--;
         bullets.splice(bi, 1);
+        if (inv.hp <= 0) {
+          inv.active = false;
+          const p = players[b.owner];
+          let pts = inv.points;
+          // Combo system
+          if (t - p.lastKillTime < 1.5) { p.combo = Math.min(p.combo + 1, 10); }
+          else { p.combo = 1; }
+          p.lastKillTime = t;
+          pts *= (p.powerup === "double" ? 2 : 1);
+          pts += (p.combo - 1) * 5;  // combo bonus
+
+          // Steal powerup: steal 10% of richest opponent's score
+          if (p.powerup === "steal") {
+            let richest = null;
+            for (const op of players) {
+              if (op.index !== p.index && op.alive && (!richest || op.score > richest.score)) richest = op;
+            }
+            if (richest && richest.score > 0) {
+              const stolen = Math.ceil(richest.score * 0.03);
+              richest.score -= stolen;
+              pts += stolen;
+              sfx.steal();
+            }
+          }
+
+          p.score += pts;
+          p.kills++;
+          invadersKilledThisWave++;
+          explosions.push({ x: ix, y: iy, frame: 0, color: p.color });
+          sfx.kill(inv.points / 10);
+
+          // Random bonus drop
+          if (Math.random() < 0.12) {
+            const bt = BONUS_TYPES[Math.floor(Math.random() * BONUS_TYPES.length)];
+            bonusDrops.push({ x: ix + INV_W / 2, y: iy, ...bt });
+            sfx.bonusDrop();
+          }
+        }
+        break;
       }
     }
   }
 
-  // Collision: bullets vs barriers
-  for (let bi = bullets.length - 1; bi >= 0; bi--) {
-    const key = Math.round(bullets[bi].x) + "," + Math.round(bullets[bi].y);
-    if (barriers.has(key)) { barriers.delete(key); bullets.splice(bi, 1); }
-  }
-  for (let bi = enemyBullets.length - 1; bi >= 0; bi--) {
-    const key = Math.round(enemyBullets[bi].x) + "," + Math.round(enemyBullets[bi].y);
-    if (barriers.has(key)) { barriers.delete(key); enemyBullets.splice(bi, 1); }
-  }
-
-  // Collision: enemy bullets vs player
-  const px = Math.round(playerX);
-  for (let bi = enemyBullets.length - 1; bi >= 0; bi--) {
-    const b = enemyBullets[bi];
-    if (Math.round(b.y) === playerY && b.x >= px && b.x <= px + SHIP_W) {
-      hp -= 3;
-      explosions.push({ x: px, y: playerY, frame: 0 });
-      sfx.playerHit();
-      enemyBullets.splice(bi, 1);
-      if (hp <= 0) { hp = 0; state = "gameover"; sfx.gameOver(); return; }
+  // Collision: bonus drops vs players
+  for (let bi = bonusDrops.length - 1; bi >= 0; bi--) {
+    const bd = bonusDrops[bi];
+    for (const p of players) {
+      if (!p.alive) continue;
+      const px = Math.round(p.x);
+      if (Math.round(bd.y) >= p.y - 1 && Math.round(bd.y) <= p.y && bd.x >= px && bd.x <= px + SHIP_W) {
+        if (bd.effect === "hp") {
+          p.hp = Math.min(p.maxHp, p.hp + 3);
+        } else {
+          p.powerup = bd.effect;
+          p.powerupTimer = t + 6;
+        }
+        sfx.bonusGrab();
+        bonusDrops.splice(bi, 1);
+        break;
+      }
     }
   }
 
-  // Invaders reaching player
-  for (let r = 0; r < invaders.length; r++)
-    for (let c = 0; c < invaders[r].length; c++)
-      if (invaders[r][c]) {
-        const [, iy] = invPos(r, c);
-        if (iy >= playerY - 2) { state = "gameover"; sfx.gameOver(); return; }
+  // Invaders reaching bottom = damage to nearest player
+  for (const inv of invaders) {
+    if (!inv.active) continue;
+    if (inv.y >= ROWS - 2) {
+      inv.active = false;
+      // Damage closest alive player
+      let closest = null, minDist = Infinity;
+      for (const p of players) {
+        if (!p.alive) continue;
+        const d = Math.abs(p.x + SHIP_W / 2 - inv.x - INV_W / 2);
+        if (d < minDist) { minDist = d; closest = p; }
       }
+      if (closest) {
+        closest.hp -= 2;
+        explosions.push({ x: Math.round(closest.x), y: closest.y, frame: 0, color: C.red });
+        sfx.playerHit();
+        if (closest.hp <= 0) { closest.hp = 0; closest.alive = false; }
+      }
+    }
+  }
 
-  // Level clear
-  if (aliveCount() === 0) {
-    sfx.levelUp();
-    level++;
-    initInvaders();
-    invSpeed = Math.max(0.1, 0.5 - level * 0.05);
-    enemyShotInterval = Math.max(0.3, 1.0 - level * 0.1);
+  // Clean dead invaders
+  invaders = invaders.filter(inv => inv.active && inv.y < ROWS);
+
+  // Wave end check: all spawned and all dead/offscreen
+  if (invadersToSpawn <= 0 && invaders.filter(i => i.active).length === 0) {
+    endWave();
+  }
+
+  // All players dead
+  if (players.every(p => !p.alive)) {
+    endWave();
   }
 }
 
@@ -368,12 +497,12 @@ function draw() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   if (state === "title") { drawTitle(); return; }
-  if (state === "gameover") { drawGame(); drawGameOver(); return; }
+  if (state === "setup") { drawSetup(); return; }
+  if (state === "countdown") { drawCountdown(); return; }
+  if (state === "results") { drawResults(); return; }
 
   drawGame();
-  if (state === "paused") {
-    drawTextCentered(" PAUSED - Press P to resume ", Math.floor(ROWS/2), C.yellow, true);
-  }
+  if (state === "waveEnd") drawWaveEnd();
 }
 
 function drawTitle() {
@@ -385,81 +514,213 @@ function drawTitle() {
     " |____/| .__/ \\__,_|\\___\\___||____/ \\__,_|___/_| |_|\\___|_|  |___/",
     "       |_|                                                         ",
   ];
-  const cy = Math.floor(ROWS / 2) - 8;
+  const cy = Math.floor(ROWS / 2) - 10;
   title.forEach((line, i) => drawTextCentered(line, cy + i, C.green, true));
+
+  drawTextCentered("HUNGRY  HUNGRY  HIPPOS  EDITION", cy + 7, C.magenta, true);
 
   const inst = [
     "",
-    "\u2190 \u2192 or A/D  :  Move",
-    "  SPACE      :  Fire",
-    "    P        :  Pause",
-    "    M        :  Toggle Sound",
-    "    Q        :  Quit",
+    "2-4 Players  |  Local Multiplayer  |  Most Kills Wins",
+    "",
+    "P1: A/D + W          P2: Arrows + Up",
+    "P3: J/L + I          P4: Numpad 4/6/8",
+    "",
+    "Grab powerups:  + HP   x 2X   ! RAPID   * STEAL",
+    "Build combos with fast consecutive kills!",
     "",
     "Press SPACE to start!",
   ];
   inst.forEach((line, i) => {
-    const color = i === inst.length - 1 ? C.yellow : C.white;
+    let color = C.white;
+    if (i === 0) color = C.dim;
+    if (i === inst.length - 1) color = C.yellow;
+    if (line.includes("P1:")) {
+      // Draw player controls in their colors
+      const y = cy + title.length + i + 1;
+      const x = Math.floor((COLS - line.length) / 2);
+      drawText("P1: A/D + W", x, y, C.green, true);
+      drawText("P2: Arrows + Up", x + 21, y, C.cyan, true);
+      return;
+    }
+    if (line.includes("P3:")) {
+      const y = cy + title.length + i + 1;
+      const x = Math.floor((COLS - line.length) / 2);
+      drawText("P3: J/L + I", x, y, C.orange, true);
+      drawText("P4: Numpad 4/6/8", x + 21, y, C.magenta, true);
+      return;
+    }
     drawTextCentered(line, cy + title.length + i + 1, color);
   });
 }
 
-function drawGame() {
-  // HUD
-  const snd = soundEnabled ? "ON" : "OFF";
-  const filled = Math.round((hp / maxHp) * 10);
-  const hpBar = "\u2588".repeat(filled) + "\u2591".repeat(10 - filled);
-  const hpColor = hp > 6 ? C.green : hp > 3 ? C.yellow : C.red;
+function drawSetup() {
+  drawTextCentered("HOW MANY PLAYERS?", Math.floor(ROWS / 2) - 4, C.white, true);
 
-  drawText(`Score: ${score}  |  HP [`, 1, 0, C.white, true);
-  const hpStart = `Score: ${score}  |  HP [`.length + 1;
-  drawText(hpBar, hpStart, 0, hpColor, true);
-  drawText(`] ${hp}/${maxHp}`, hpStart + 10, 0, C.white, true);
-  drawText(`Level: ${level}  |  Sound: ${snd}`, COLS - 22, 0, C.white, true);
-
-  // Separator
-  drawText("\u2500".repeat(COLS), 0, 0.7, C.dim);
-
-  // Mystery ship
-  if (mysteryShip) {
-    drawText("<-?->", Math.round(mysteryShip.x), 1, C.magenta, true);
+  const ships = [];
+  for (let i = 0; i < 4; i++) {
+    const active = i < numPlayers;
+    const cfg = PLAYER_CONFIGS[i];
+    const col = Math.floor(COLS / 2) - 16 + i * 10;
+    const row = Math.floor(ROWS / 2);
+    drawText(cfg.ship, col, row, active ? cfg.color : C.dim, active);
+    drawText(cfg.name, col + 1, row + 1, active ? cfg.color : C.dim, active);
   }
+
+  drawTextCentered(`< ${numPlayers} >`, Math.floor(ROWS / 2) - 1, C.yellow, true);
+  drawTextCentered("Arrow keys to change, SPACE to start", Math.floor(ROWS / 2) + 4, C.dim);
+  const snd = soundEnabled ? "ON" : "OFF";
+  drawTextCentered(`M: Sound ${snd}  |  ESC: Back`, Math.floor(ROWS / 2) + 6, C.dim);
+}
+
+function drawCountdown() {
+  const t = now();
+  const elapsed = t - countdownTime;
+  const num = 3 - Math.floor(elapsed);
+
+  // Draw player positions preview
+  for (const p of players) {
+    drawText(p.ship, Math.round(p.x), p.y, p.color, true);
+    drawText(p.name, Math.round(p.x) + 1, p.y + 1, p.color);
+  }
+
+  if (num > 0) {
+    drawTextCentered(`${num}`, Math.floor(ROWS / 2), C.white, true);
+  } else {
+    drawTextCentered("GO!", Math.floor(ROWS / 2), C.yellow, true);
+  }
+  drawTextCentered(`Wave ${wave + 1} of ${totalWaves}`, Math.floor(ROWS / 2) + 2, C.dim);
+}
+
+function drawGame() {
+  // HUD - score bar for each player
+  drawText("\u2500".repeat(COLS), 0, 0.7, C.dim);
+  const segW = Math.floor(COLS / numPlayers);
+  for (let i = 0; i < players.length; i++) {
+    const p = players[i];
+    const sx = i * segW + 1;
+
+    // Name and score
+    const info = `${p.name}: ${p.score}`;
+    drawText(info, sx, 0, p.alive ? p.color : C.dim, true);
+
+    // HP bar
+    const filled = Math.max(0, Math.round((p.hp / p.maxHp) * 6));
+    const hpBar = "\u2588".repeat(filled) + "\u2591".repeat(6 - filled);
+    const hpColor = p.hp > 6 ? C.green : p.hp > 3 ? C.yellow : C.red;
+    drawText("[", sx + info.length + 1, 0, C.dim);
+    drawText(hpBar, sx + info.length + 2, 0, p.alive ? hpColor : C.dim);
+    drawText("]", sx + info.length + 8, 0, C.dim);
+
+    // Powerup indicator
+    if (p.powerup) {
+      const pChar = p.powerup === "double" ? "x2" : p.powerup === "rapid" ? "!!" : p.powerup === "steal" ? "$$" : "";
+      drawText(pChar, sx + info.length + 10, 0, C.magenta, true);
+    }
+
+    // Combo
+    if (p.combo > 1 && now() - p.lastKillTime < 1.5) {
+      drawText(`${p.combo}x`, sx + info.length + 13, 0, C.yellow, true);
+    }
+  }
+
+  // Wave info
+  const waveInfo = `Wave ${wave}/${totalWaves}`;
+  const snd = soundEnabled ? "ON" : "OFF";
+  drawText(`${waveInfo}  Sound:${snd}`, COLS - waveInfo.length - 11, 0, C.dim);
 
   // Invaders
-  for (let r = 0; r < invaders.length; r++)
-    for (let c = 0; c < invaders[r].length; c++)
-      if (invaders[r][c]) {
-        const [x, y] = invPos(r, c);
-        drawText(INVADER_SPRITES[r][c], x, y, invColor(r), r === 0);
-      }
-
-  // Barriers
-  for (const key of barriers) {
-    const [bx, by] = key.split(",").map(Number);
-    drawText("#", bx, by, C.green);
+  for (const inv of invaders) {
+    if (!inv.active) continue;
+    const ix = Math.round(inv.x), iy = Math.round(inv.y);
+    if (iy < 1 || iy >= ROWS) continue;
+    // Show damage: dim color if hurt
+    let col = inv.color;
+    if (inv.hp < inv.maxHp) {
+      // Blend toward red
+      col = inv.hp <= 1 ? C.red : inv.color;
+    }
+    drawText(inv.sprite, ix, iy, col, inv.hp === inv.maxHp);
+    // HP pips for multi-hit invaders
+    if (inv.maxHp > 1) {
+      const pips = ".".repeat(inv.hp);
+      drawText(pips, ix, iy - 0.4, C.dim);
+    }
   }
 
-  // Player
-  drawText(SHIP, Math.round(playerX), playerY, C.green, true);
+  // Bonus drops (pulsing)
+  for (const bd of bonusDrops) {
+    const pulse = Math.sin(now() * 8) > 0;
+    if (pulse) drawText(bd.char, Math.round(bd.x), Math.round(bd.y), bd.color, true);
+    else drawText(bd.char, Math.round(bd.x), Math.round(bd.y), C.white, true);
+  }
+
+  // Players
+  for (const p of players) {
+    if (!p.alive) {
+      drawText("XXXXX", Math.round(p.x), p.y, C.dim);
+      continue;
+    }
+    drawText(p.ship, Math.round(p.x), p.y, p.color, true);
+    // Flash on powerup
+    if (p.powerup && Math.sin(now() * 12) > 0) {
+      drawText(p.ship, Math.round(p.x), p.y, C.white, true);
+    }
+  }
 
   // Bullets
-  for (const b of bullets) drawText("|", Math.round(b.x), Math.round(b.y), C.green, true);
-  for (const b of enemyBullets) drawText("!", Math.round(b.x), Math.round(b.y), C.red, true);
+  for (const b of bullets) {
+    drawText("|", Math.round(b.x), Math.round(b.y), b.color, true);
+  }
 
   // Explosions
-  const boom = ["*", "\\*/", " ' "];
+  const boom = ["*", "\\*/", " . "];
   for (const e of explosions) {
     const f = Math.min(Math.floor(e.frame / 2), boom.length - 1);
-    drawText(boom[f], e.x, e.y, C.red, true);
+    drawText(boom[f], e.x, e.y, e.color || C.red, true);
   }
 }
 
-function drawGameOver() {
-  const msg = "*** GAME OVER ***";
-  drawTextCentered(msg, Math.floor(ROWS/2), C.red, true);
-  drawTextCentered(`Final Score: ${score}`, Math.floor(ROWS/2) + 2, C.white);
-  drawTextCentered("Press SPACE to play again, Q to quit", Math.floor(ROWS/2) + 4, C.yellow);
+function drawWaveEnd() {
+  drawRect(Math.floor(COLS/2) - 16, Math.floor(ROWS/2) - 3, 32, 7, "rgba(0,0,0,0.85)");
+  if (wave >= totalWaves || players.every(p => !p.alive)) {
+    drawTextCentered("FINAL ROUND COMPLETE!", Math.floor(ROWS/2) - 2, C.yellow, true);
+  } else {
+    drawTextCentered(`Wave ${wave} Complete!`, Math.floor(ROWS/2) - 2, C.yellow, true);
+  }
+
+  // Mini scoreboard
+  const sorted = [...players].sort((a, b) => b.score - a.score);
+  sorted.forEach((p, i) => {
+    const medal = i === 0 ? ">> " : "   ";
+    const line = `${medal}${p.name}: ${p.score} (${p.kills} kills)`;
+    drawTextCentered(line, Math.floor(ROWS/2) + i, p.color, i === 0);
+  });
 }
+
+function drawResults() {
+  drawTextCentered("GAME OVER", Math.floor(ROWS/2) - 8, C.red, true);
+
+  const sorted = [...players].sort((a, b) => b.score - a.score);
+  const winner = sorted[0];
+
+  drawTextCentered(`${winner.name} WINS!`, Math.floor(ROWS/2) - 5, winner.color, true);
+
+  // Scoreboard
+  drawTextCentered("FINAL SCORES", Math.floor(ROWS/2) - 3, C.white, true);
+  drawTextCentered("\u2500".repeat(36), Math.floor(ROWS/2) - 2, C.dim);
+  sorted.forEach((p, i) => {
+    const rank = ["1st", "2nd", "3rd", "4th"][i];
+    const bar = "\u2588".repeat(Math.max(1, Math.round((p.score / Math.max(1, winner.score)) * 20)));
+    const line = ` ${rank}  ${p.name}  ${String(p.score).padStart(6)}  ${bar}  (${p.kills} kills)`;
+    drawTextCentered(line, Math.floor(ROWS/2) - 1 + i * 2, p.color, i === 0);
+  });
+
+  drawTextCentered("SPACE: Menu  |  R: Rematch", Math.floor(ROWS/2) + sorted.length * 2 + 2, C.yellow);
+}
+
+// Shim drawRect for translucent overlay
+const _origFill = ctx.fillRect.bind(ctx);
 
 // --- Game Loop ---
 function loop() {
