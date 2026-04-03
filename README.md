@@ -41,97 +41,505 @@ Move and fire work simultaneously.
 
 ---
 
-## The Story of SpaceBashers
+## Commit Log
 
-### Preface
+What follows is the unabridged development history of SpaceBashers, reconstructed from git, Jira, Slack archives, two restraining orders, and one therapist's notes (shared with written consent).
 
-What you see before you is a single Python file. 600-odd lines. You could read it in ten minutes. But what you cannot see — what no `git log` will ever capture — is the mass of human wreckage that was left in its wake.
+```
+commit a1b2c3d
+Author: diNGo <dingo@usomad.me>
+Date:   Mon Jan 6 02:14:33 2021 -0500
 
-SpaceBashers was not built. It was *survived*.
+    initial commit: how hard could space invaders be lol
 
-### The Early Days (Week 1-47)
+ A spacebashers.py | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+```
 
-It started, as all doomed endeavors do, with a Slack message at 2 AM.
+```
+commit e4f5a6b
+Author: diNGo <dingo@usomad.me>
+Date:   Mon Jan 6 02:17:01 2021 -0500
 
-> "how hard could space invaders be lol"
+    add game loop (print + sleep based, looks incredible)
 
-Famous last words. The kind of sentence that, in retrospect, belongs on a tombstone. What followed was forty-seven weeks of architectural debates, mass refactors, mass re-refactors, mass re-re-refactors, three complete rewrites from scratch, and one mass that was held for the original codebase in a small church in Vermont.
+    it flickers a little. or a lot. we'll fix it later.
+```
 
-The first prototype used `print()` statements and `time.sleep()`. It flickered like a dying fluorescent light in a gas station bathroom. We called it "beautiful." We were young. We were naive. We had not yet known loss.
+```
+commit c7d8e9f
+Author: diNGo <dingo@usomad.me>
+Date:   Tue Jan 7 14:30:00 2021 -0500
 
-### The Curses Migration (Week 48-91)
+    we will not fix it later
 
-The decision to move to `curses` split the team in two. On one side: those who believed in the sacred promise of terminal-native rendering. On the other: those who had actually read the curses documentation.
+    the flickering is load-bearing. if you remove the sleep(0.1)
+    the invaders move at the speed of light and the game ends in
+    0.003 seconds. leaving it.
+```
 
-The debates were vicious. Friendships that had weathered college, weddings, and shared Netflix passwords crumbled overnight. Marcus — our lead architect for fourteen years — left the project after a heated argument about whether `addstr()` or `addch()` was the morally correct way to draw a bullet character. He moved to a yurt in Montana. Last we heard, he raises alpacas now. He seems at peace. We do not speak of Marcus.
+```
+commit 0a1b2c3
+Author: Marcus <marcus@spacebashers.dev>
+Date:   Fri Mar 14 09:12:44 2021 -0500
 
-Jennifer, our UX researcher, spent eleven weeks conducting A/B tests on the player ship design. The final candidates were `^` and `/^\`. The team vote was deadlocked 4-4 for six days. On the seventh day, Jennifer presented a 200-page report titled "The Semiotics of ASCII Spacecraft: A Phenomenological Inquiry." She then resigned, citing "a fundamental loss of faith in collaborative creative processes." She took the office espresso machine with her. That was a dark Monday.
+    RFC: propose migration to curses for terminal rendering
 
-### The Sound Engine Incident (Week 92-156)
+    see attached 47-page design document. i believe this is the
+    correct path forward and i will die on this hill.
+```
 
-Adding sound nearly destroyed us.
+```
+commit d4e5f6a
+Author: Jennifer <jennifer@spacebashers.dev>
+Date:   Fri Mar 14 09:13:02 2021 -0500
 
-The first approach — a custom FM synthesis engine written from scratch in pure Python — worked flawlessly in testing and produced a sound in production best described as "a modem falling down a staircase." We shipped it anyway. The bug reports were... colorful.
+    absolutely not
+```
 
-The `afplay` pivot seemed so elegant at first. "Just spawn a subprocess," they said. "What could go wrong," they said. What went wrong was that after sixty seconds of gameplay, the machine would be running four hundred concurrent `afplay` processes and the laptop would achieve liftoff. We lost two MacBook Pros to thermal events. DevOps still won't make eye contact with us.
+```
+commit b7c8d9e
+Author: Marcus <marcus@spacebashers.dev>
+Date:   Fri Mar 14 09:13:58 2021 -0500
 
-The channel-based rewrite took eleven weeks and cost us our best systems engineer, Tomás, who mass-resigned after discovering we'd been spawning processes in a loop without a reap strategy. His resignation email was four words: "I expected better. Goodbye." He now works at NASA. We hear the rockets are more stable.
+    it's either curses or pygame and i know where you live
+```
 
-### The Great HP Debate (Week 157-203)
+```
+commit f0a1b2c
+Author: Jennifer <jennifer@spacebashers.dev>
+Date:   Fri Mar 14 09:15:30 2021 -0500
 
-The original game had three lives. Simple. Clean. Elegant. And yet.
+    fine. but i'm starting the UX research on ship sprites NOW
+    and nobody is rushing me
+```
 
-Someone — and to this day no one will admit who — opened a Jira ticket titled "SPBASH-4471: Consider hit points instead of lives for enhanced gameplay feel." That ticket would go on to accumulate 847 comments, spawn 12 sub-tasks, require 3 executive steering committee meetings, and end one engagement.
+```
+commit 3d4e5f6
+Author: Marcus <marcus@spacebashers.dev>
+Date:   Sat Nov 13 23:58:01 2021 -0500
 
-The engaged couple in question — both senior engineers on the project — found themselves on opposite sides of the "damage per hit" debate. She advocated for 2 HP per hit with a max of 8. He was firmly in the 3-damage-from-10 camp. The wedding was called off after a pull request review turned personal. The registry gifts had already shipped. It was a whole thing.
+    begin curses migration
 
-We went with 3 damage from 10. It was the right call. But at what cost.
+    this is going to be clean. this is going to be elegant.
+    this is going to be the best terminal renderer anyone has
+    ever seen. i can feel it.
+```
 
-### The Movement Refactor (Week 204-251)
+```
+commit a7b8c9d
+Author: Marcus <marcus@spacebashers.dev>
+Date:   Sun Nov 14 04:22:17 2021 -0500
 
-"Players should be able to move and shoot at the same time."
+    why does addstr crash when you write to the bottom-right cell
 
-This single sentence — spoken innocently during a Thursday standup — triggered what the team now refers to only as "The Dark Quarter." For forty-seven weeks, we grappled with the fundamental limitations of terminal input buffering, the philosophical implications of simultaneous intent, and the question of whether a key that is not currently being pressed can still be said to be "held."
+    spent five hours on this. turns out it's a "known behavior"
+    since 1992. curses writes the character, advances the cursor
+    past the screen boundary, and panics. KNOWN. BEHAVIOR.
+```
 
-Our philosophy consultant (yes, we hired a philosophy consultant; no, we will not be taking questions) wrote a 90-page white paper on the epistemology of keyboard state in non-blocking I/O systems. It was peer-reviewed. It was published. It won a minor award.
+```
+commit e0f1a2b
+Author: Marcus <marcus@spacebashers.dev>
+Date:   Sun Nov 14 04:23:45 2021 -0500
 
-The actual fix was six lines of code.
+    wrap everything in try/except curses.error
 
-### The Barrier Arch Controversy (Week 252-278)
+    i am not proud of this commit. but i am alive.
+```
 
-Were the barriers supposed to have arches at the bottom? The original Space Invaders did. But were we bound by the conventions of 1978? Were we artists or were we archaeologists?
+```
+commit 2c3d4e5
+Author: diNGo <dingo@usomad.me>
+Date:   Mon Nov 15 10:00:12 2021 -0500
 
-The team split into three factions: the Archists, the Anti-Archists, and a splinter group called the Arch-Agnostics who argued that the shape of the barrier should be procedurally generated at runtime based on the phase of the moon. That last group consisted of one person — Kevin — who was going through some things at the time. We gave Kevin some space. Kevin is doing better now.
+    marcus are you okay
 
-We kept the arches.
+    your last three commits were between midnight and 4am
+    and the last one just says "i am alive"
+```
 
-### The Final Push (Week 279-283)
+```
+commit f6a7b8c
+Author: Marcus <marcus@spacebashers.dev>
+Date:   Mon Nov 15 10:47:33 2021 -0500
 
-In the end, it came down to five of us in a room that smelled like cold pizza and broken dreams. The whiteboard was covered in diagrams. The floor was covered in energy drink cans. Someone had written "WHY" on the wall in dry-erase marker. No one remembered doing it.
+    i have mass-resigned. addstr() is morally correct and the team
+    chose addch(). i cannot be part of this. do not contact me.
 
-At 3:47 AM on a Tuesday, the game ran. The invaders marched. The bullets flew. The barriers crumbled. The mystery ship sailed across the top of the screen with its little `<-?->` and its eerie oscillating tone, and for one perfect moment, everything was right in the world.
+    p.s. i'm keeping the YubiKey
+```
 
-Someone cried. We will not say who. But it was all of us.
+```
+commit 9d0e1f2
+Author: diNGo <dingo@usomad.me>
+Date:   Mon Nov 15 11:02:00 2021 -0500
 
-### Aftermath
+    revoke marcus's access, he took the yubikey
 
-SpaceBashers shipped as a single Python file with zero dependencies. The total development time, from first commit to final push, spanned roughly five and a half years. The team, originally forty-seven strong, finished with five. Some left for other projects. Some left for other careers. Marcus has his alpacas. Jennifer opened a coffee shop (she kept the espresso machine). Tomás put something in orbit, which is more than we can say.
+    also we were using addstr the whole time. i don't know
+    what he was looking at. godspeed marcus.
+```
 
-The Jira board has 12,847 closed tickets and one open ticket — SPBASH-1, filed on day one: "Make space invaders game." It remains open. It will always remain open. Because SpaceBashers is not a product. It is a *journey*. And the journey never truly ends.
+```
+commit a3b4c5d
+Author: Jennifer <jennifer@spacebashers.dev>
+Date:   Wed May 18 16:00:00 2022 -0500
 
-To everyone who contributed, who believed, who argued at 2 AM about pixel-perfect ASCII alignment in a terminal window: thank you. You are not forgotten. Your commits live on in the reflog, even if they were squashed.
+    UX research complete: ship sprite recommendation
 
-And to Marcus specifically: the alpacas look great, man. No hard feelings.
+    after 11 weeks of A/B testing across 340 participants,
+    cognitive load analysis, and a focus group in denver,
+    the two finalists are:
 
-### Dedication
+    Option A:  ^
+    Option B:  /^\
 
-*For the mass who never shipped their side project.*
+    full report attached (198 pages + appendices)
+```
 
-*You are not alone.*
+```
+commit e6f7a8b
+Author: diNGo <dingo@usomad.me>
+Date:   Wed May 18 16:04:22 2022 -0500
 
----
+    team vote: 4-4 tie on ship sprite. deadlocked.
 
-*SpaceBashers is maintained by diNGo, the last one standing.*
+    jennifer is not taking this well
+```
+
+```
+commit 9c0d1e2
+Author: Jennifer <jennifer@spacebashers.dev>
+Date:   Tue May 24 08:00:00 2022 -0500
+
+    final ship sprite proposal: " /^\ " (with padding)
+
+    i have published my paper "The Semiotics of ASCII Spacecraft:
+    A Phenomenological Inquiry" to resolve this once and for all.
+
+    this is also my last commit. i am mass-resigning effective
+    immediately. i have lost faith in collaborative creative
+    processes. i am taking the espresso machine. do not try to
+    stop me.
+```
+
+```
+commit f3a4b5c
+Author: diNGo <dingo@usomad.me>
+Date:   Tue May 24 09:30:00 2022 -0500
+
+    she took the espresso machine. she actually took it.
+
+    using her sprite though. it's good.
+```
+
+```
+commit 6d7e8f9
+Author: Tomás <tomas@spacebashers.dev>
+Date:   Mon Sep 5 11:00:00 2022 -0500
+
+    feat: add sound engine - procedural WAV generation
+
+    custom FM synthesis generating 8 retro sound effects at runtime.
+    shoot, kill, explosion, mystery, march, etc. all pure python,
+    no dependencies. plays via afplay on macOS.
+
+    i'm actually pretty proud of this one.
+```
+
+```
+commit 0a1b2c3
+Author: Tomás <tomas@spacebashers.dev>
+Date:   Mon Sep 5 14:33:17 2022 -0500
+
+    fix: sounds now actually sound like things
+
+    turns out i had the sample rate wrong and everything sounded
+    like dial-up internet. which, in fairness, some people on
+    the team called "retro" and "intentional." it was not.
+```
+
+```
+commit d4e5f6a
+Author: diNGo <dingo@usomad.me>
+Date:   Thu Oct 20 19:44:00 2022 -0500
+
+    HOTFIX: game spawns 400 afplay processes after 60 seconds
+
+    players are reporting that their laptops sound like
+    jet engines and then the game freezes. one user said
+    their macbook "achieved liftoff." two machines confirmed
+    dead from thermal events. devops is not speaking to us.
+
+    root cause: we spawn a new afplay process for every sound
+    and never kill or reap them. the march sound alone fires
+    20 times per second in late game. oops.
+```
+
+```
+commit b7c8d9e
+Author: Tomás <tomas@spacebashers.dev>
+Date:   Thu Oct 20 20:01:33 2022 -0500
+
+    i expected better. goodbye.
+
+ D src/sound/engine.py
+ D src/sound/synthesis.py
+ D src/sound/channels.py
+ D src/sound/README.md
+ D .tomas_was_here
+
+    he deleted his own files on the way out. respect honestly.
+```
+
+```
+commit f0a1b2c
+Author: diNGo <dingo@usomad.me>
+Date:   Fri Oct 21 03:00:00 2022 -0500
+
+    fix: channel-based sound with max 1 process per sound type
+
+    rewrote the entire sound engine at 3am because tomas rage-quit
+    and deleted everything. each sound gets one channel. new play
+    kills the old process. march sound skips if still playing.
+    max 8 concurrent afplay processes. laptops will survive.
+
+    tomas if you're reading this: NASA called, they want to
+    know how you made a laptop achieve escape velocity
+```
+
+```
+commit 3d4e5f6
+Author: Rachel <rachel@spacebashers.dev>
+Date:   Fri Feb 3 10:00:00 2023 -0500
+
+    SPBASH-4471: propose HP system instead of lives
+
+    opening this ticket for discussion. i think hit points
+    would feel better than 3 discrete lives. thoughts?
+```
+
+```
+commit a7b8c9d
+Author: Rachel <rachel@spacebashers.dev>
+Date:   Fri Feb 3 10:00:01 2023 -0500
+
+    this will be a calm and productive discussion
+```
+
+```
+commit e0f1a2b
+Author: diNGo <dingo@usomad.me>
+Date:   Sat Aug 19 02:00:00 2023 -0500
+
+    SPBASH-4471: close after 847 comments, 3 executive meetings
+
+    for the record:
+    - rachel wanted 2 damage from 8 max HP
+    - derek wanted 3 damage from 10 max HP
+    - rachel and derek were engaged
+    - "were" is doing a lot of work in that sentence
+    - the wedding is off
+    - the registry gifts had already shipped
+    - it was a whole thing
+
+    going with 3 from 10. adding color-coded HP bar.
+    green > 6, yellow > 3, red <= 3.
+
+    i'm not putting the ticket number in this commit message
+    because i never want to see it again.
+```
+
+```
+commit 2c3d4e5
+Author: Derek <derek@spacebashers.dev>
+Date:   Sat Aug 19 02:04:00 2023 -0500
+
+    for the record i was right about 3 from 10
+```
+
+```
+commit f6a7b8c
+Author: Rachel <rachel@spacebashers.dev>
+Date:   Sat Aug 19 02:04:30 2023 -0500
+
+    for the record i am mass-keeping the ring
+```
+
+```
+commit 9d0e1f2
+Author: Kevin <kevin@spacebashers.dev>
+Date:   Thu Nov 2 15:30:00 2023 -0500
+
+    RFC: barriers should be procedurally generated based on
+    the current phase of the moon
+
+    hear me out
+```
+
+```
+commit a3b4c5d
+Author: diNGo <dingo@usomad.me>
+Date:   Thu Nov 2 15:31:00 2023 -0500
+
+    kevin no
+```
+
+```
+commit e6f7a8b
+Author: Kevin <kevin@spacebashers.dev>
+Date:   Thu Nov 2 15:31:30 2023 -0500
+
+    kevin yes. i have a working prototype. it uses the
+    ephem library and renders barriers as voronoi diagrams
+    seeded by lunar declination. on a full moon you get
+    maximum coverage. new moon = no barriers. it's thematic.
+```
+
+```
+commit 9c0d1e2
+Author: diNGo <dingo@usomad.me>
+Date:   Thu Nov 2 15:45:00 2023 -0500
+
+    kevin we are keeping the arches. please take some PTO.
+
+    kevin is going through some things. we are giving
+    kevin space. kevin will be okay.
+```
+
+```
+commit f3a4b5c
+Author: Kevin <kevin@spacebashers.dev>
+Date:   Fri Nov 3 09:00:00 2023 -0500
+
+    taking PTO. sorry about the moon thing. i'm going to
+    a cabin for a while. no wifi. no lunar ephemeris data.
+    just trees.
+```
+
+```
+commit 6d7e8f9
+Author: Kevin <kevin@spacebashers.dev>
+Date:   Mon Nov 6 08:00:00 2023 -0500
+
+    i'm back. the cabin had wifi. i made a moon-based
+    tetris clone. it's on my github. i'm doing better now.
+```
+
+```
+commit 0b1c2d3
+Author: Dr. Elena Voss <consultant@philosophy.edu>
+Date:   Mon Mar 4 12:00:00 2024 -0500
+
+    add white paper: epistemology of keyboard state in
+    non-blocking I/O systems (peer reviewed)
+
+    can a key that is not currently pressed still be said
+    to be "held"? if the terminal cannot detect key-up
+    events, does the concept of "holding" a key have any
+    ontological grounding? (90 pages, 212 citations)
+
+    this work was commissioned after the team spent 47 weeks
+    arguing about simultaneous movement and firing.
+
+    A docs/keyboard_epistemology.pdf | Bin 0 -> 4.7M
+```
+
+```
+commit e4f5a6b
+Author: diNGo <dingo@usomad.me>
+Date:   Mon Mar 4 12:15:00 2024 -0500
+
+    yes we hired a philosophy consultant. no we will not be
+    taking questions.
+
+    her paper won a minor award. we are proud and confused.
+```
+
+```
+commit c7d8e9f
+Author: diNGo <dingo@usomad.me>
+Date:   Tue Mar 5 09:00:00 2024 -0500
+
+    fix: simultaneous move and fire
+
+    drain key buffer each frame. set movement and firing
+    flags independently. apply all flags. done.
+
+    6 lines of code. forty-seven weeks. one award-winning
+    philosophy paper. this is game development.
+
+ M spacebashers.py | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+```
+
+```
+commit 0a1b2c3
+Author: diNGo <dingo@usomad.me>
+Date:   Fri Mar 7 22:00:00 2025 -0500
+
+    remove docs/keyboard_epistemology.pdf
+
+    it was 4.7 megabytes and git lfs is $14/month.
+    the paper lives on in the journal of computational
+    phenomenology, vol 12 issue 3. if you need it, you
+    know where to look. you probably don't need it.
+```
+
+```
+commit d4e5f6a
+Author: diNGo <dingo@usomad.me>
+Date:   Tue Mar 25 03:47:00 2025 -0500
+
+    v1.0: it works. it actually works.
+
+    the invaders march. the bullets fly. the barriers crumble.
+    the mystery ship sails across with its little <-?-> and
+    its eerie oscillating tone.
+
+    someone cried. we will not say who. it was all of us.
+
+    team started at 47 engineers. shipping with 5.
+    marcus has alpacas. jennifer has a coffee shop.
+    tomas put something in orbit. rachel kept the ring.
+    derek mass-deleted his dating apps. kevin is doing better.
+    dr. voss won another award.
+
+    jira has 12,847 closed tickets.
+    SPBASH-1 ("make space invaders game") remains open.
+    it will always remain open.
+```
+
+```
+commit b7c8d9e
+Author: diNGo <dingo@usomad.me>
+Date:   Wed Apr 1 19:22:00 2026 -0500
+
+    push to github. mass-close jira. mass-delete slack.
+    we're done. we're finally done.
+
+    this game is one python file. zero dependencies.
+    it took five and a half years.
+
+    to everyone who committed, who believed, who argued
+    about ASCII alignment in a terminal window at 2am:
+    you are not forgotten. your commits live in the reflog
+    even if they were squashed.
+
+    marcus: the alpacas look great man. no hard feelings.
+
+ =============================================
+  spacebashers.py | 626 +++++++++++++++++++++
+  1 file changed, 626 insertions(+)
+ =============================================
+
+    maintained by diNGo. the last one standing.
+```
+
+```
+SPBASH-1  make space invaders game  ·  OPEN  ·  opened 2021-01-06
+```
 
 ## License
 
